@@ -1,0 +1,12 @@
+[23-Feb-2026 15:03:41 America/Sao_Paulo] PHP Fatal error:  Uncaught mysqli_sql_exception: Table 'mobuss_presenca.funcionarios' doesn't exist in /home1/mobuss/public_html/sistemas/presenca/functions.php:15
+Stack trace:
+#0 /home1/mobuss/public_html/sistemas/presenca/functions.php(15): mysqli->query('SELECT id, nome...')
+#1 /home1/mobuss/public_html/sistemas/presenca/index.php(10): obterFuncionarios()
+#2 {main}
+  thrown in /home1/mobuss/public_html/sistemas/presenca/functions.php on line 15
+[23-Feb-2026 15:03:57 America/Sao_Paulo] PHP Fatal error:  Uncaught mysqli_sql_exception: Table 'mobuss_presenca.funcionarios' doesn't exist in /home1/mobuss/public_html/sistemas/presenca/functions.php:15
+Stack trace:
+#0 /home1/mobuss/public_html/sistemas/presenca/functions.php(15): mysqli->query('SELECT id, nome...')
+#1 /home1/mobuss/public_html/sistemas/presenca/index.php(10): obterFuncionarios()
+#2 {main}
+  thrown in /home1/mobuss/public_html/sistemas/presenca/functions.php on line 15
