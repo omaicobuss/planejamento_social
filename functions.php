@@ -12,8 +12,8 @@ require_once 'config.php';
 function obterFuncionarios() {
     global $conn;
     $sql = "SELECT id, nome FROM funcionarios ORDER BY nome ASC";
-    $result = $conn->query($sql);
-    return $result->fetch_all(MYSQLI_ASSOC);
+    $stmt = $conn->query($sql);
+    return $stmt->fetchAll();
 }
 
 /**
@@ -29,12 +29,10 @@ function obterRegimeTrabalho($funcionario_id, $ano, $mes) {
             ORDER BY data, turno";
     
     $stmt = $conn->prepare($sql);
-    $stmt->bind_param("iss", $funcionario_id, $data_inicio, $data_fim);
-    $stmt->execute();
-    $result = $stmt->get_result();
+    $stmt->execute([$funcionario_id, $data_inicio, $data_fim]);
     
     $registros = [];
-    while ($row = $result->fetch_assoc()) {
+    while ($row = $stmt->fetch()) {
         $key = $row['data'] . '_' . $row['turno'];
         $registros[$key] = $row['status'];
     }
@@ -52,18 +50,16 @@ function salvarRegimeTrabalho($funcionario_id, $data, $turno, $status) {
     if ($status === null || $status === '') {
         $sql = "DELETE FROM registros_regime WHERE funcionario_id = ? AND data = ? AND turno = ?";
         $stmt = $conn->prepare($sql);
-        $stmt->bind_param("iss", $funcionario_id, $data, $turno);
-        return $stmt->execute();
+        return $stmt->execute([$funcionario_id, $data, $turno]);
     }
     
-    // Inserir ou atualizar
+    // Inserir ou atualizar (upsert no SQLite)
     $sql = "INSERT INTO registros_regime (funcionario_id, data, turno, status) 
             VALUES (?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE status = ?";
+            ON CONFLICT(funcionario_id, data, turno) DO UPDATE SET status = excluded.status";
     
     $stmt = $conn->prepare($sql);
-    $stmt->bind_param("issss", $funcionario_id, $data, $turno, $status, $status);
-    return $stmt->execute();
+    return $stmt->execute([$funcionario_id, $data, $turno, $status]);
 }
 
 /**
@@ -84,11 +80,9 @@ function obterMatrizPresenca($ano, $mes) {
             ORDER BY f.nome, r.data, r.turno";
     
     $stmt = $conn->prepare($sql);
-    $stmt->bind_param("ss", $data_inicio, $data_fim);
-    $stmt->execute();
-    $result = $stmt->get_result();
+    $stmt->execute([$data_inicio, $data_fim]);
     
-    return $result->fetch_all(MYSQLI_ASSOC);
+    return $stmt->fetchAll();
 }
 
 /**
@@ -103,10 +97,8 @@ function temPresencialNoTurno($ano, $mes, $dia, $turno) {
             WHERE data = ? AND turno = ? AND status = 'presencial'";
     
     $stmt = $conn->prepare($sql);
-    $stmt->bind_param("ss", $data, $turno);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $row = $result->fetch_assoc();
+    $stmt->execute([$data, $turno]);
+    $row = $stmt->fetch();
     
     return $row['total'] > 0;
 }
@@ -124,9 +116,7 @@ function obterContagemStatusPorDia($ano, $mes, $dia, $turno) {
             GROUP BY status";
     
     $stmt = $conn->prepare($sql);
-    $stmt->bind_param("ss", $data, $turno);
-    $stmt->execute();
-    $result = $stmt->get_result();
+    $stmt->execute([$data, $turno]);
     
     $contagem = [
         'presencial' => 0,
@@ -136,7 +126,7 @@ function obterContagemStatusPorDia($ano, $mes, $dia, $turno) {
         'nao_definido' => 0
     ];
     
-    while ($row = $result->fetch_assoc()) {
+    while ($row = $stmt->fetch()) {
         $contagem[$row['status']] = $row['total'];
     }
     

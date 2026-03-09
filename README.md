@@ -18,27 +18,23 @@ Um sistema web para gerenciar o regime de trabalho (presencial/home office/féri
 
 ## 📋 Requisitos
 
-- PHP 7.4 ou superior
-- MySQL 5.7 ou superior
+- PHP 7.4 ou superior (com extensao `pdo_sqlite` habilitada)
 - Servidor Web (Apache, Nginx, etc.)
 - Bootstrap 5.3 (CDN)
 
 ## 🚀 Instalação
 
-### 1. Preparar o Banco de Dados
+### 1. Preparar o Banco de Dados SQLite
 
-```bash
-# Criar banco de dados
-mysql -u root -p -e "CREATE DATABASE regime_trabalho CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+O sistema agora usa SQLite com o arquivo `database.sqlite` na raiz do projeto.
 
-# Criar usuário (opcional, mas recomendado)
-mysql -u root -p -e "CREATE USER 'regime_user'@'localhost' IDENTIFIED BY 'regime123';"
-mysql -u root -p -e "GRANT ALL PRIVILEGES ON regime_trabalho.* TO 'regime_user'@'localhost';"
-mysql -u root -p -e "FLUSH PRIVILEGES;"
+Se voce ja tem o dump MySQL (`mobuss_presenca.sql`), gere o SQLite com:
 
-# Importar schema
-mysql -u regime_user -p regime_trabalho < schema.sql
+```powershell
+& "C:\laragon\bin\php\php-8.3.30-Win32-vs16-x64\php.exe" migrate_dump_to_sqlite.php
 ```
+
+Esse comando cria/recria o arquivo `database.sqlite` e importa os dados do dump.
 
 ### 2. Copiar Arquivos para o Servidor
 
@@ -57,26 +53,26 @@ cp -r regime-trabalho/* /var/www/html/regime-trabalho/
 chmod -R 755 /var/www/html/regime-trabalho/
 ```
 
-### 4. Configurar Conexão com Banco de Dados
+### 4. Configurar Conexao com Banco de Dados
 
-Edite o arquivo `config.php` e atualize as credenciais:
+O arquivo `config.php` ja esta configurado para SQLite:
 
 ```php
-define('DB_HOST', 'localhost');
-define('DB_USER', 'regime_user');
-define('DB_PASS', 'regime123');
-define('DB_NAME', 'regime_trabalho');
+define('DB_FILE', __DIR__ . DIRECTORY_SEPARATOR . 'database.sqlite');
 ```
 
 ## 📁 Estrutura de Arquivos
 
 ```
 regime-trabalho/
-├── config.php              # Configuração do banco de dados
+├── config.php              # Configuracao do banco (SQLite)
 ├── functions.php           # Funções auxiliares
 ├── index.php              # Página de registro de regime
 ├── visao-geral.php        # Página de visão geral e alertas
 ├── schema.sql             # Script de criação do banco
+├── migrate_dump_to_sqlite.php # Migra dump MySQL para SQLite
+├── mobuss_presenca.sql     # Dump MySQL de origem (opcional)
+├── database.sqlite         # Banco SQLite usado pela aplicacao
 ├── .htaccess              # Configuração Apache (opcional)
 └── README.md              # Este arquivo
 ```
@@ -100,23 +96,20 @@ regime-trabalho/
 
 ## 🔧 Configuração Avançada
 
-### Adicionar Novos Funcionários
+### Adicionar Novos Funcionarios
 
-Insira diretamente no banco de dados:
+Insira diretamente no banco de dados SQLite:
 
 ```sql
 INSERT INTO funcionarios (nome) VALUES ('Nome do Funcionário');
 ```
 
-### Alterar Credenciais do Banco
+### Alterar Caminho do Banco SQLite
 
 Edite `config.php`:
 
 ```php
-define('DB_HOST', 'seu-host');
-define('DB_USER', 'seu-usuario');
-define('DB_PASS', 'sua-senha');
-define('DB_NAME', 'seu-banco');
+define('DB_FILE', __DIR__ . DIRECTORY_SEPARATOR . 'database.sqlite');
 ```
 
 ### Personalizar Timezone
@@ -136,21 +129,23 @@ date_default_timezone_set('America/Sao_Paulo'); // Altere conforme necessário
 
 ## 📝 Backup do Banco de Dados
 
-```bash
-# Fazer backup
-mysqldump -u regime_user -p regime_trabalho > backup_$(date +%Y%m%d).sql
+```powershell
+# Backup do arquivo SQLite
+Copy-Item .\database.sqlite .\backup_database_20260309.sqlite
 
 # Restaurar backup
-mysql -u regime_user -p regime_trabalho < backup_20240101.sql
+Copy-Item .\backup_database_20260309.sqlite .\database.sqlite -Force
 ```
+
+Se voce ainda estiver migrando de MySQL, mantenha tambem o dump `mobuss_presenca.sql` como backup historico.
 
 ## 🐛 Troubleshooting
 
-### Erro de Conexão com Banco de Dados
+### Erro de Conexao com Banco de Dados
 
-- Verifique se MySQL está rodando
-- Confirme as credenciais em `config.php`
-- Verifique se o usuário tem permissões corretas
+- Verifique se o arquivo `database.sqlite` existe
+- Confirme se a extensao `pdo_sqlite` esta habilitada no PHP
+- Confirme o caminho `DB_FILE` em `config.php`
 
 ### Dados não são salvos
 
@@ -170,7 +165,7 @@ mysql -u regime_user -p regime_trabalho < backup_20240101.sql
 
 Para problemas ou dúvidas, verifique:
 1. Os logs do servidor web
-2. Os logs do MySQL
+2. Mensagens de erro do PHP/SQLite
 3. As permissões de arquivo/diretório
 
 ## 📄 Licença
@@ -187,6 +182,6 @@ O sistema usa Bootstrap 5.3 e pode ser facilmente personalizado:
 
 ---
 
-**Versão**: 1.0.0  
-**Data**: 2026-02-23  
-**Desenvolvido com**: PHP, MySQL, Bootstrap 5.3
+**Versao**: 1.1.0  
+**Data**: 2026-03-09  
+**Desenvolvido com**: PHP, SQLite, Bootstrap 5.3

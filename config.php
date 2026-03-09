@@ -1,25 +1,20 @@
 <?php
 /**
- * Configuração do Banco de Dados
+ * Configuracao do Banco de Dados
  * Sistema de Gestão de Regime de Trabalho
  */
 
-// Configurações de conexão
-define('DB_HOST', 'localhost');
-define('DB_USER', 'root');
-define('DB_PASS', '');
-define('DB_NAME', 'mobuss_presenca');
+// Caminho do arquivo SQLite
+define('DB_FILE', __DIR__ . DIRECTORY_SEPARATOR . 'database.sqlite');
 
-// Criar conexão
-$conn = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
-
-// Verificar conexão
-if ($conn->connect_error) {
-    die("Erro de conexão: " . $conn->connect_error);
+try {
+    $conn = new PDO('sqlite:' . DB_FILE);
+    $conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $conn->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+    $conn->exec('PRAGMA foreign_keys = ON;');
+} catch (Throwable $e) {
+    die('Erro de conexao com SQLite: ' . $e->getMessage());
 }
-
-// Definir charset para UTF-8
-$conn->set_charset("utf8mb4");
 
 // Definir timezone
 date_default_timezone_set('America/Sao_Paulo');
