@@ -55,7 +55,37 @@ if ($adminAutenticado && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['
     }
 }
 
+$tiposDiaNaoTrabalhado = [
+    'feriado' => 'Feriado',
+    'nao_trabalhado' => 'Dia nao trabalhado'
+];
+
+if ($adminAutenticado && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['salvar_dia_nao_trabalhado'])) {
+    $resultadoDia = salvarDiaNaoTrabalhado(
+        $_POST['data_dia_nao_trabalhado'] ?? '',
+        $_POST['tipo_dia_nao_trabalhado'] ?? '',
+        $_POST['descricao_dia_nao_trabalhado'] ?? ''
+    );
+
+    if ($resultadoDia['sucesso']) {
+        $mensagem = '<div class="alert alert-success" role="alert">' . htmlspecialchars($resultadoDia['mensagem']) . '</div>';
+    } else {
+        $mensagem = '<div class="alert alert-danger" role="alert">' . htmlspecialchars($resultadoDia['mensagem']) . '</div>';
+    }
+}
+
+if ($adminAutenticado && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['excluir_dia_nao_trabalhado'])) {
+    $resultadoDia = excluirDiaNaoTrabalhado($_POST['dia_nao_trabalhado_id'] ?? 0);
+
+    if ($resultadoDia['sucesso']) {
+        $mensagem = '<div class="alert alert-success" role="alert">' . htmlspecialchars($resultadoDia['mensagem']) . '</div>';
+    } else {
+        $mensagem = '<div class="alert alert-danger" role="alert">' . htmlspecialchars($resultadoDia['mensagem']) . '</div>';
+    }
+}
+
 $pessoas = $adminAutenticado ? obterPessoasCadastradas() : [];
+$diasNaoTrabalhados = $adminAutenticado ? obterDiasNaoTrabalhados() : [];
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -114,6 +144,67 @@ $pessoas = $adminAutenticado ? obterPessoasCadastradas() : [];
                             <button type="submit" name="salvar_senha_edicao" class="btn btn-primary">Salvar senha de edicao</button>
                         </div>
                     </form>
+                </div>
+            </section>
+
+            <section class="card shadow-sm mb-4">
+                <div class="card-body">
+                    <h2 class="h6">Dias sem necessidade de escala</h2>
+                    <p class="text-muted small mb-3">Cadastre feriados e outros dias nao trabalhados para que o sistema desconsidere a necessidade de escala nessas datas.</p>
+
+                    <form method="POST" class="row g-3 align-items-end mb-3">
+                        <div class="col-md-3">
+                            <label class="form-label" for="dataDiaNaoTrabalhado">Data</label>
+                            <input type="date" class="form-control" id="dataDiaNaoTrabalhado" name="data_dia_nao_trabalhado" required>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label" for="tipoDiaNaoTrabalhado">Tipo</label>
+                            <select class="form-select" id="tipoDiaNaoTrabalhado" name="tipo_dia_nao_trabalhado" required>
+                                <?php foreach ($tiposDiaNaoTrabalhado as $valorTipo => $rotuloTipo): ?>
+                                    <option value="<?php echo htmlspecialchars($valorTipo); ?>"><?php echo htmlspecialchars($rotuloTipo); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="descricaoDiaNaoTrabalhado">Descricao (opcional)</label>
+                            <input type="text" class="form-control" id="descricaoDiaNaoTrabalhado" name="descricao_dia_nao_trabalhado" maxlength="120">
+                        </div>
+                        <div class="col-md-2 d-grid">
+                            <button type="submit" name="salvar_dia_nao_trabalhado" class="btn btn-primary">Salvar dia</button>
+                        </div>
+                    </form>
+
+                    <?php if (count($diasNaoTrabalhados) === 0): ?>
+                        <div class="alert alert-secondary mb-0">Nenhum dia nao trabalhado cadastrado.</div>
+                    <?php else: ?>
+                        <div class="table-responsive">
+                            <table class="table table-sm align-middle mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>Data</th>
+                                        <th>Tipo</th>
+                                        <th>Descricao</th>
+                                        <th class="text-end">Acoes</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($diasNaoTrabalhados as $dia): ?>
+                                        <tr>
+                                            <td><?php echo htmlspecialchars(formatarData($dia['data'])); ?></td>
+                                            <td><?php echo htmlspecialchars($tiposDiaNaoTrabalhado[$dia['tipo']] ?? $dia['tipo']); ?></td>
+                                            <td><?php echo htmlspecialchars((string)($dia['descricao'] ?? '')); ?></td>
+                                            <td class="text-end">
+                                                <form method="POST" class="d-inline">
+                                                    <input type="hidden" name="dia_nao_trabalhado_id" value="<?php echo (int)$dia['id']; ?>">
+                                                    <button type="submit" name="excluir_dia_nao_trabalhado" class="btn btn-outline-danger btn-sm">Excluir</button>
+                                                </form>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    <?php endif; ?>
                 </div>
             </section>
 

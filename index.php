@@ -51,17 +51,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['liberar_calendario'])
     $mes_form = isset($_POST['mes']) ? (int)$_POST['mes'] : $mes;
     $cpf_prefixo_informado = preg_replace('/\D+/', '', (string)($_POST['cpf_prefixo'] ?? ''));
     $cpf_prefixo_informado = substr($cpf_prefixo_informado, 0, 3);
-    $senha_edicao = (string)($_POST['senha_edicao'] ?? '');
     $cpf_prefixo_cadastrado = obterPrefixoCpfFuncionario($func_id);
 
     if ($cpf_prefixo_cadastrado === null) {
         $mensagem = '<div class="alert alert-danger alert-dismissible fade show" role="alert">
                         Nao foi possivel liberar: CPF nao cadastrado para esta pessoa.
-                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                    </div>';
-    } elseif (!verificarSenhaConfiguracao('edit_access_password', $senha_edicao)) {
-        $mensagem = '<div class="alert alert-danger alert-dismissible fade show" role="alert">
-                        Senha de edicao invalida.
                         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                     </div>';
     } elseif (!preg_match('/^\d{3}$/', $cpf_prefixo_informado)) {
@@ -115,6 +109,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['salvar'])) {
 
 $funcionariosPorCategoria = obterFuncionariosPorCategoria();
 $funcionarios = array_merge($funcionariosPorCategoria['servidores'], $funcionariosPorCategoria['estagiarios']);
+$nome_funcionario_selecionado = '';
+if ($funcionario_id !== null) {
+    foreach ($funcionarios as $funcionario) {
+        if ((int)$funcionario['id'] === (int)$funcionario_id) {
+            $nome_funcionario_selecionado = (string)$funcionario['nome'];
+            break;
+        }
+    }
+}
+
+$nome_funcionario_liberado = '';
+if ($pode_editar_calendario) {
+    foreach ($funcionarios as $funcionario) {
+        if ((int)$funcionario['id'] === (int)$funcionario_id) {
+            $nome_funcionario_liberado = (string)$funcionario['nome'];
+            break;
+        }
+    }
+}
+
+$dias_nao_trabalhados_mes = obterDiasNaoTrabalhados($ano, $mes);
+$mapa_feriados = [];
+foreach ($dias_nao_trabalhados_mes as $diaNaoTrabalhado) {
+    if (($diaNaoTrabalhado['tipo'] ?? '') !== 'feriado' || empty($diaNaoTrabalhado['data'])) {
+        continue;
+    }
+
+    $mapa_feriados[(string)$diaNaoTrabalhado['data']] = trim((string)($diaNaoTrabalhado['descricao'] ?? ''));
+}
 
 $regime = $funcionario_id ? obterRegimeTrabalho($funcionario_id, $ano, $mes) : [];
 
@@ -125,10 +148,14 @@ $dataCursor = new DateTime($data_inicio);
 $fim = new DateTime($data_fim);
 
 while ($dataCursor <= $fim) {
+    $dataIso = $dataCursor->format('Y-m-d');
+    $ehFeriado = isset($mapa_feriados[$dataIso]);
     $dias_mes[] = [
         'dia' => (int)$dataCursor->format('d'),
-        'data' => $dataCursor->format('Y-m-d'),
-        'dia_semana' => (int)$dataCursor->format('N')
+        'data' => $dataIso,
+        'dia_semana' => (int)$dataCursor->format('N'),
+        'eh_feriado' => $ehFeriado,
+        'descricao_feriado' => $ehFeriado ? (string)$mapa_feriados[$dataIso] : ''
     ];
     $dataCursor->modify('+1 day');
 }
@@ -291,6 +318,22 @@ while ($dataCursor <= $fim) {
             min-width: 200px;
         }
 
+        .mes-centro {
+            min-width: 200px;
+            text-align: center;
+        }
+
+        .mes-pessoa {
+            margin-top: 4px;
+            font-size: 0.82rem;
+            color: #1f2937;
+        }
+
+        .mes-pessoa strong {
+            color: #1d4ed8;
+            font-weight: 600;
+        }
+
         .calendario {
             display: grid;
             grid-template-columns: repeat(7, 1fr);
@@ -337,14 +380,41 @@ while ($dataCursor <= $fim) {
         }
 
         .dia.outro-mes {
-            background: #f9fafb;
+            background-color: #f9fafb;
             color: #9ca3af;
+        }
+
+        .dia.feriado {
+            background-image:
+                linear-gradient(
+                    45deg,
+                    rgba(15, 23, 42, 0.12) 25%,
+                    transparent 25%,
+                    transparent 50%,
+                    rgba(15, 23, 42, 0.12) 50%,
+                    rgba(15, 23, 42, 0.12) 75%,
+                    transparent 75%,
+                    transparent
+                );
+            background-size: 12px 12px;
         }
 
         .dia-numero {
             font-weight: 700;
             font-size: 16px;
             margin-bottom: 5px;
+        }
+
+        .feriado-tag {
+            display: inline-block;
+            margin: 0 auto 4px;
+            padding: 2px 6px;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 700;
+            color: #92400e;
+            background: rgba(254, 243, 199, 0.95);
+            border: 1px solid rgba(217, 119, 6, 0.4);
         }
 
         .dia-status {
@@ -442,7 +512,7 @@ while ($dataCursor <= $fim) {
     <div class="pg-wrapper">
         <header class="pg-header">
             <h1 class="pg-header-title">Registro de Regime de Trabalho</h1>
-            <p class="pg-header-subtitle">Selecione um nome e valide os 3 primeiros digitos do CPF para liberar edicao.</p>
+            <p class="pg-header-subtitle">Selecione um nome e valide os 3 primeiros dígitos do CPF para liberar edição.</p>
         </header>
 
         <main class="pg-container">
@@ -453,7 +523,7 @@ while ($dataCursor <= $fim) {
             <div class="layout-grid">
                 <section class="secao">
                     <h2 class="secao-titulo">Pessoas cadastradas</h2>
-                    <p class="secao-descricao">Clique no titulo para abrir cada lista.</p>
+                    <p class="secao-descricao">Clique no título para abrir cada lista.</p>
 
                     <div class="accordion" id="accordionPessoas">
                         <div class="accordion-item">
@@ -503,7 +573,7 @@ while ($dataCursor <= $fim) {
                                                 </button>
                                             <?php endforeach; ?>
                                         <?php else: ?>
-                                            <span class="text-muted small">Nenhum estagiario cadastrado.</span>
+                                            <span class="text-muted small">Nenhum estagiário cadastrado.</span>
                                         <?php endif; ?>
                                     </div>
                                 </div>
@@ -523,7 +593,7 @@ while ($dataCursor <= $fim) {
                     <?php if ($funcionario_id): ?>
                         <?php if (!$pode_editar_calendario): ?>
                             <div class="alert alert-warning" role="alert">
-                                Calendario bloqueado para edicao. Clique no nome da lista e informe os 3 primeiros digitos do CPF para liberar.
+                                Calendário bloqueado para edição. Clique no nome da lista e informe os 3 primeiros dígitos do CPF para liberar.
                             </div>
                         <?php endif; ?>
 
@@ -531,11 +601,22 @@ while ($dataCursor <= $fim) {
                             <a href="?funcionario_id=<?php echo $funcionario_id; ?>&ano=<?php echo $mes === 1 ? $ano - 1 : $ano; ?>&mes=<?php echo $mes === 1 ? 12 : $mes - 1; ?>" class="btn-nav">
                                 ← Anterior
                             </a>
-                            <div class="mes-ano"><?php echo obterNomeMes($mes) . ' ' . $ano; ?></div>
+                            <div class="mes-centro">
+                                <div class="mes-ano"><?php echo obterNomeMes($mes) . ' ' . $ano; ?></div>
+                                <?php if ($nome_funcionario_liberado !== ''): ?>
+                                    <div class="mes-pessoa">Preenchendo escala: <strong><?php echo htmlspecialchars($nome_funcionario_liberado); ?></strong></div>
+                                <?php elseif ($nome_funcionario_selecionado !== ''): ?>
+                                    <div class="mes-pessoa">Pessoa selecionada: <strong><?php echo htmlspecialchars($nome_funcionario_selecionado); ?></strong></div>
+                                <?php endif; ?>
+                            </div>
                             <a href="?funcionario_id=<?php echo $funcionario_id; ?>&ano=<?php echo $mes === 12 ? $ano + 1 : $ano; ?>&mes=<?php echo $mes === 12 ? 1 : $mes + 1; ?>" class="btn-nav">
                                 Proximo →
                             </a>
                         </div>
+
+                        <?php if (!empty($mapa_feriados)): ?>
+                            <div class="text-muted small mb-2">Dias com padrao quadriculado indicam feriado.</div>
+                        <?php endif; ?>
 
                         <div class="calendario">
                             <div class="dia-semana">Dom</div>
@@ -561,14 +642,31 @@ while ($dataCursor <= $fim) {
                                 $status_manha = $regime[$data . '_manhã'] ?? null;
                                 $status_tarde = $regime[$data . '_tarde'] ?? null;
                                 $eh_fim_semana = $dia_info['dia_semana'] > 5;
-                                $classe_dia = 'dia ' . ($eh_fim_semana ? 'outro-mes ' : '') . ($pode_editar_calendario ? '' : 'bloqueado');
+                                $eh_feriado = !empty($dia_info['eh_feriado']);
+                                $classe_dia = 'dia '
+                                    . ($eh_fim_semana ? 'outro-mes ' : '')
+                                    . ($pode_editar_calendario ? '' : 'bloqueado ')
+                                    . ($eh_feriado ? 'feriado' : '');
+                                $titulo_dia = '';
+                                if ($eh_feriado) {
+                                    $titulo_dia = 'Feriado';
+                                    if (!empty($dia_info['descricao_feriado'])) {
+                                        $titulo_dia .= ': ' . $dia_info['descricao_feriado'];
+                                    }
+                                }
                             ?>
                                 <div class="<?php echo trim($classe_dia); ?>"
+                                     <?php if ($titulo_dia !== ''): ?>
+                                         title="<?php echo htmlspecialchars($titulo_dia, ENT_QUOTES); ?>"
+                                     <?php endif; ?>
                                      <?php if ($pode_editar_calendario): ?>
                                          data-bs-toggle="modal" data-bs-target="#modalDia"
                                          onclick="abrirModalDia('<?php echo $data; ?>', <?php echo $funcionario_id; ?>, '<?php echo htmlspecialchars((string)($status_manha ?? ''), ENT_QUOTES); ?>', '<?php echo htmlspecialchars((string)($status_tarde ?? ''), ENT_QUOTES); ?>')"
                                      <?php endif; ?>>
                                     <div class="dia-numero"><?php echo $dia; ?></div>
+                                    <?php if ($eh_feriado): ?>
+                                        <div class="feriado-tag">Feriado</div>
+                                    <?php endif; ?>
                                     <div class="dia-status">
                                         <?php if ($status_manha): ?>
                                             <span class="status-badge status-<?php echo $status_manha; ?>"><?php echo obterIconeStatus($status_manha); ?></span>
@@ -590,7 +688,7 @@ while ($dataCursor <= $fim) {
                         </div>
                     <?php else: ?>
                         <div class="alert alert-secondary mb-0" role="alert">
-                            Nenhum nome selecionado. O calendario permanece bloqueado ate que um nome seja selecionado e validado.
+                            Nenhum nome selecionado. O calendário permanece bloqueado até que um nome seja selecionado e validado.
                         </div>
                     <?php endif; ?>
                 </section>
@@ -628,16 +726,6 @@ while ($dataCursor <= $fim) {
                             >
                         </div>
 
-                        <div class="mb-0">
-                            <label class="form-label" for="acessoSenhaEdicao">Senha de edicao</label>
-                            <input
-                                class="form-control"
-                                type="password"
-                                id="acessoSenhaEdicao"
-                                name="senha_edicao"
-                                required
-                            >
-                        </div>
                     </div>
                     <div class="modal-footer">
                         <a href="visao-geral.php?ano=<?php echo (int)$ano; ?>&mes=<?php echo (int)$mes; ?>" class="btn btn-outline-secondary">
@@ -746,7 +834,6 @@ while ($dataCursor <= $fim) {
             document.getElementById('acessoFuncionarioId').value = funcionarioId;
             document.getElementById('acessoFuncionarioNome').textContent = nomeFuncionario;
             document.getElementById('acessoCpfPrefixo').value = '';
-            document.getElementById('acessoSenhaEdicao').value = '';
         }
 
         function abrirModalDia(data, funcionarioId, statusManha, statusTarde) {

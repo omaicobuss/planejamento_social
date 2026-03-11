@@ -63,6 +63,25 @@ function garantirEstruturaConfiguracoes() {
 }
 
 /**
+ * Garante estrutura para dias sem necessidade de escala.
+ */
+function garantirEstruturaDiasNaoTrabalhados() {
+    global $conn;
+
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS dias_nao_trabalhados (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            data TEXT NOT NULL UNIQUE,
+            tipo TEXT NOT NULL DEFAULT 'feriado',
+            descricao TEXT,
+            criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    ");
+
+    $conn->exec("CREATE INDEX IF NOT EXISTS idx_dias_nao_trabalhados_data ON dias_nao_trabalhados(data)");
+}
+
+/**
  * Obter configuracao por chave.
  */
 function obterConfiguracao($chave, $valorPadrao = null) {
@@ -119,6 +138,7 @@ function verificarSenhaConfiguracao($chave, $senhaEmTextoPlano) {
 }
 
 garantirEstruturaConfiguracoes();
+garantirEstruturaDiasNaoTrabalhados();
 
 /**
  * Obter todos os funcionarios
@@ -260,6 +280,109 @@ function atualizarPessoaCadastrada($id, $nomeCompleto, $cpf, $email, $supervisor
             : 'Nao foi possivel atualizar os dados.';
         return ['sucesso' => false, 'mensagem' => $mensagem];
     }
+}
+
+/**
+ * Listar dias sem necessidade de escala.
+ */
+function obterDiasNaoTrabalhados($ano = null, $mes = null) {
+    global $conn;
+
+    if ($ano !== null && $mes !== null) {
+        $ano = (int)$ano;
+        $mes = (int)$mes;
+        $dataInicio = "$ano-" . str_pad((string)$mes, 2, '0', STR_PAD_LEFT) . "-01";
+        $dataFim = date('Y-m-t', strtotime($dataInicio));
+
+        $stmt = $conn->prepare("
+            SELECT id, data, tipo, descricao
+            FROM dias_nao_trabalhados
+            WHERE data BETWEEN ? AND ?
+            ORDER BY data ASC
+        ");
+        $stmt->execute([$dataInicio, $dataFim]);
+        return $stmt->fetchAll();
+    }
+
+    $stmt = $conn->query("
+        SELECT id, data, tipo, descricao
+        FROM dias_nao_trabalhados
+        ORDER BY data ASC
+    ");
+    return $stmt->fetchAll();
+}
+
+/**
+ * Cadastrar ou atualizar um dia sem necessidade de escala.
+ */
+function salvarDiaNaoTrabalhado($data, $tipo, $descricao = '') {
+    global $conn;
+
+    $data = trim((string)$data);
+    $tipo = trim((string)$tipo);
+    $descricao = trim((string)$descricao);
+
+    $dataObj = DateTime::createFromFormat('Y-m-d', $data);
+    $dataValida = $dataObj && $dataObj->format('Y-m-d') === $data;
+    if (!$dataValida) {
+        return ['sucesso' => false, 'mensagem' => 'Informe uma data valida.'];
+    }
+
+    if (!in_array($tipo, ['feriado', 'nao_trabalhado'], true)) {
+        return ['sucesso' => false, 'mensagem' => 'Tipo de dia invalido.'];
+    }
+
+    try {
+        $stmt = $conn->prepare("
+            INSERT INTO dias_nao_trabalhados (data, tipo, descricao)
+            VALUES (?, ?, ?)
+            ON CONFLICT(data) DO UPDATE SET
+                tipo = excluded.tipo,
+                descricao = excluded.descricao
+        ");
+        $stmt->execute([$data, $tipo, $descricao]);
+
+        return ['sucesso' => true, 'mensagem' => 'Dia salvo com sucesso.'];
+    } catch (Throwable $e) {
+        return ['sucesso' => false, 'mensagem' => 'Nao foi possivel salvar o dia informado.'];
+    }
+}
+
+/**
+ * Excluir dia sem necessidade de escala.
+ */
+function excluirDiaNaoTrabalhado($id) {
+    global $conn;
+
+    $id = (int)$id;
+    if ($id <= 0) {
+        return ['sucesso' => false, 'mensagem' => 'Dia invalido para exclusao.'];
+    }
+
+    $stmt = $conn->prepare("DELETE FROM dias_nao_trabalhados WHERE id = ?");
+    $ok = $stmt->execute([$id]);
+
+    if (!$ok) {
+        return ['sucesso' => false, 'mensagem' => 'Nao foi possivel excluir o dia informado.'];
+    }
+
+    return ['sucesso' => true, 'mensagem' => 'Dia removido com sucesso.'];
+}
+
+/**
+ * Retorna mapa de dias sem necessidade de escala para consulta rapida.
+ */
+function obterMapaDiasNaoTrabalhados($ano, $mes) {
+    $dias = obterDiasNaoTrabalhados((int)$ano, (int)$mes);
+    $mapa = [];
+
+    foreach ($dias as $dia) {
+        if (!empty($dia['data'])) {
+            $mapa[(string)$dia['data']] = true;
+        }
+    }
+
+    return $mapa;
 }
 
 /**
@@ -407,14 +530,16 @@ function obterContagemStatusPorDia($ano, $mes, $dia, $turno) {
 function obterDiasUteis($ano, $mes) {
     $data_inicio = "$ano-" . str_pad($mes, 2, '0', STR_PAD_LEFT) . "-01";
     $data_fim = date('Y-m-t', strtotime($data_inicio));
+    $mapaDiasNaoTrabalhados = obterMapaDiasNaoTrabalhados($ano, $mes);
     
     $dias = [];
     $data = new DateTime($data_inicio);
     $fim = new DateTime($data_fim);
     
     while ($data <= $fim) {
+        $dataIso = $data->format('Y-m-d');
         $dia_semana = $data->format('N'); // 1 = segunda, 5 = sexta
-        if ($dia_semana >= 1 && $dia_semana <= 5) {
+        if ($dia_semana >= 1 && $dia_semana <= 5 && !isset($mapaDiasNaoTrabalhados[$dataIso])) {
             $dias[] = (int)$data->format('d');
         }
         $data->modify('+1 day');

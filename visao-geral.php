@@ -5,6 +5,9 @@
  */
 
 require_once 'functions.php';
+if (!headers_sent()) {
+    header('Content-Type: text/html; charset=UTF-8');
+}
 
 // Obter mês e ano
 $ano = isset($_GET['ano']) ? (int)$_GET['ano'] : date('Y');
@@ -18,6 +21,18 @@ if ($ano < 2020 || $ano > 2030) $ano = date('Y');
 $funcionarios = obterFuncionarios();
 $dados_matriz = obterMatrizPresenca($ano, $mes);
 $dias_uteis = obterDiasUteis($ano, $mes);
+$mapa_dias_nao_trabalhados = obterMapaDiasNaoTrabalhados($ano, $mes);
+$dias_nao_trabalhados_mes = obterDiasNaoTrabalhados($ano, $mes);
+$mapa_feriados = [];
+foreach ($dias_nao_trabalhados_mes as $diaNaoTrabalhado) {
+    if (($diaNaoTrabalhado['tipo'] ?? '') !== 'feriado' || empty($diaNaoTrabalhado['data'])) {
+        continue;
+    }
+
+    $mapa_feriados[(string)$diaNaoTrabalhado['data']] = [
+        'descricao' => trim((string)($diaNaoTrabalhado['descricao'] ?? ''))
+    ];
+}
 
 // Organizar dados por funcionário e data
 $matriz = [];
@@ -45,13 +60,87 @@ $data = new DateTime($data_inicio);
 $fim = new DateTime($data_fim);
 
 while ($data <= $fim) {
+    $dataIso = $data->format('Y-m-d');
+    $ehFeriado = isset($mapa_feriados[$dataIso]);
     $dias_mes[] = [
         'dia' => (int)$data->format('d'),
-        'data' => $data->format('Y-m-d'),
+        'data' => $dataIso,
         'dia_semana' => $data->format('N'),
-        'eh_util' => $data->format('N') >= 1 && $data->format('N') <= 5
+        'eh_util' => $data->format('N') >= 1
+            && $data->format('N') <= 5
+            && !isset($mapa_dias_nao_trabalhados[$dataIso]),
+        'eh_feriado' => $ehFeriado,
+        'descricao_feriado' => $ehFeriado ? (string)$mapa_feriados[$dataIso]['descricao'] : ''
     ];
     $data->modify('+1 day');
+}
+
+$categoria_por_funcionario = [];
+foreach ($funcionarios as $func) {
+    $categoria_por_funcionario[(int)$func['id']] = (($func['categoria'] ?? 'servidor') === 'estagiario')
+        ? 'estagiario'
+        : 'servidor';
+}
+
+$resumo_presencial_calendario = [];
+foreach ($dias_mes as $dia_info) {
+    $resumo_presencial_calendario[$dia_info['data']] = [
+        'manha' => ['servidor' => 0, 'estagiario' => 0, 'total' => 0],
+        'tarde' => ['servidor' => 0, 'estagiario' => 0, 'total' => 0],
+        'classe' => 'cc-dia--vermelho',
+        'descricao' => 'Sem presencial em pelo menos um periodo'
+    ];
+}
+
+foreach ($dados_matriz as $row) {
+    $funcionarioId = isset($row['id']) ? (int)$row['id'] : 0;
+    $dataReferencia = $row['data'] ?? '';
+    $status = $row['status'] ?? null;
+
+    if ($funcionarioId === 0 || $dataReferencia === '' || $status !== 'presencial') {
+        continue;
+    }
+
+    if (!isset($resumo_presencial_calendario[$dataReferencia])) {
+        continue;
+    }
+
+    $turnoOriginal = strtolower((string)($row['turno'] ?? ''));
+    $turno = (strpos($turnoOriginal, 'manh') === 0) ? 'manha' : 'tarde';
+    $categoria = $categoria_por_funcionario[$funcionarioId] ?? 'servidor';
+
+    $resumo_presencial_calendario[$dataReferencia][$turno][$categoria]++;
+    $resumo_presencial_calendario[$dataReferencia][$turno]['total']++;
+}
+
+foreach ($dias_mes as $dia_info) {
+    $dataReferencia = $dia_info['data'];
+    $resumoDia = $resumo_presencial_calendario[$dataReferencia];
+
+    if (empty($dia_info['eh_util'])) {
+        $resumo_presencial_calendario[$dataReferencia]['classe'] = 'cc-dia--neutro';
+        $resumo_presencial_calendario[$dataReferencia]['descricao'] = 'Fim de semana (sem escala)';
+        continue;
+    }
+
+    $manhaTotal = $resumoDia['manha']['total'];
+    $tardeTotal = $resumoDia['tarde']['total'];
+    $temServidor = ($resumoDia['manha']['servidor'] + $resumoDia['tarde']['servidor']) > 0;
+    $temEstagiario = ($resumoDia['manha']['estagiario'] + $resumoDia['tarde']['estagiario']) > 0;
+
+    if ($manhaTotal === 0 || $tardeTotal === 0) {
+        $resumo_presencial_calendario[$dataReferencia]['classe'] = 'cc-dia--vermelho';
+        $resumo_presencial_calendario[$dataReferencia]['descricao'] = 'Sem presencial em pelo menos um periodo';
+    } elseif (!$temServidor && $temEstagiario) {
+        $resumo_presencial_calendario[$dataReferencia]['classe'] = 'cc-dia--amarelo';
+        $resumo_presencial_calendario[$dataReferencia]['descricao'] = 'Apenas estagiarios presenciais';
+    } elseif ($temServidor && $temEstagiario) {
+        $resumo_presencial_calendario[$dataReferencia]['classe'] = 'cc-dia--verde';
+        $resumo_presencial_calendario[$dataReferencia]['descricao'] = 'Servidores e estagiarios presenciais';
+    } else {
+        $resumo_presencial_calendario[$dataReferencia]['classe'] = 'cc-dia--neutro';
+        $resumo_presencial_calendario[$dataReferencia]['descricao'] = 'Somente servidores presenciais';
+    }
 }
 ?>
 <!DOCTYPE html>
@@ -152,6 +241,229 @@ while ($data <= $fim) {
             font-size: 1rem;
             color: #111827;
             min-width: 200px;
+        }
+
+        .cc-box {
+            display: flex;
+            justify-content: center;
+        }
+
+        .cc-wrap {
+            width: 100%;
+            max-width: 33.333%;
+        }
+
+        .cc-legenda {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .cc-legenda-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.78rem;
+            color: #374151;
+        }
+
+        .cc-legenda-cor {
+            width: 14px;
+            height: 14px;
+            border-radius: 4px;
+            border: 1px solid rgba(17, 24, 39, 0.15);
+        }
+
+        .cc-calendario {
+            display: grid;
+            grid-template-columns: repeat(7, minmax(0, 1fr));
+            gap: 8px;
+        }
+
+        .cc-semana {
+            font-size: 0.72rem;
+            font-weight: 700;
+            text-align: center;
+            color: #374151;
+            padding-bottom: 6px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .cc-dia {
+            min-height: 78px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            padding: 6px;
+            background: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: transform 0.12s ease, box-shadow 0.12s ease;
+            font: inherit;
+            color: inherit;
+            text-align: center;
+            appearance: none;
+            -webkit-appearance: none;
+        }
+
+        .cc-dia:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 10px rgba(15, 23, 42, 0.15);
+        }
+
+        .cc-dia--vazio {
+            border: none;
+            background: transparent;
+            min-height: 0;
+            padding: 0;
+            cursor: default;
+            box-shadow: none;
+            transform: none;
+        }
+
+        .cc-dia--vazio:hover {
+            box-shadow: none;
+            transform: none;
+        }
+
+        .cc-dia--neutro {
+            background-color: #ffffff;
+            border-color: #d1d5db;
+        }
+
+        .cc-dia--vermelho {
+            background-color: #fee2e2;
+            border-color: #ef4444;
+        }
+
+        .cc-dia--amarelo {
+            background-color: #fef9c3;
+            border-color: #f59e0b;
+        }
+
+        .cc-dia--verde {
+            background-color: #dcfce7;
+            border-color: #22c55e;
+        }
+
+        .cc-dia--feriado {
+            background-image:
+                linear-gradient(
+                    45deg,
+                    rgba(15, 23, 42, 0.14) 25%,
+                    transparent 25%,
+                    transparent 50%,
+                    rgba(15, 23, 42, 0.14) 50%,
+                    rgba(15, 23, 42, 0.14) 75%,
+                    transparent 75%,
+                    transparent
+                );
+            background-size: 12px 12px;
+        }
+
+        .cc-legenda-cor.cc-dia--feriado {
+            background-color: #ffffff;
+        }
+
+        .cc-dia-numero {
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: #111827;
+            line-height: 1;
+        }
+
+        .cc-modal {
+            position: fixed;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+            background: rgba(15, 23, 42, 0.45);
+            z-index: 1200;
+        }
+
+        .cc-modal.aberto {
+            display: flex;
+        }
+
+        .cc-modal-card {
+            width: 100%;
+            max-width: 380px;
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.28);
+            overflow: hidden;
+        }
+
+        .cc-modal-header {
+            padding: 12px 14px;
+            background: #eff6ff;
+            border-bottom: 1px solid #dbeafe;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .cc-modal-titulo {
+            margin: 0;
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: #1e3a8a;
+        }
+
+        .cc-modal-fechar {
+            border: none;
+            background: transparent;
+            color: #1e3a8a;
+            font-size: 1.1rem;
+            line-height: 1;
+            cursor: pointer;
+        }
+
+        .cc-modal-corpo {
+            padding: 14px;
+        }
+
+        .cc-modal-bloco {
+            margin-bottom: 12px;
+        }
+
+        .cc-modal-bloco:last-child {
+            margin-bottom: 0;
+        }
+
+        .cc-modal-periodo {
+            margin: 0 0 6px;
+            font-size: 0.88rem;
+            color: #111827;
+            font-weight: 700;
+        }
+
+        .cc-modal-linha {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.84rem;
+            color: #1f2937;
+            padding: 2px 0;
+        }
+
+        .cc-modal-alerta {
+            display: none;
+            margin: 0 0 12px;
+            padding: 8px 10px;
+            border-radius: 6px;
+            border-left: 4px solid #d97706;
+            background: #fef3c7;
+            color: #92400e;
+            font-size: 0.82rem;
+        }
+
+        .cc-modal-alerta.visivel {
+            display: block;
         }
 
         .cards-grid {
@@ -447,6 +759,10 @@ while ($data <= $fim) {
                 min-width: unset;
                 flex: 1;
             }
+
+            .cc-wrap {
+                max-width: 100%;
+            }
         }
     </style>
 </head>
@@ -454,7 +770,7 @@ while ($data <= $fim) {
     <div class="pg-wrapper">
         <header class="pg-header">
             <h1 class="pg-header-title">Visão Geral de Presença</h1>
-            <p class="pg-header-subtitle">Matriz mensal de todos os servidores.</p>
+            <p class="pg-header-subtitle">Consolidado mensal de servidores e estagiarios.</p>
         </header>
 
         <main class="pg-container">
@@ -476,7 +792,7 @@ while ($data <= $fim) {
 
             <section class="cards-grid">
                 <article class="card-metrica">
-                    <div class="card-metrica-label">Servidores</div>
+                    <div class="card-metrica-label">Pessoas</div>
                     <div class="card-metrica-valor"><?php echo count($funcionarios); ?></div>
                     <div class="card-metrica-detalhe">Cadastrados no sistema.</div>
                 </article>
@@ -516,27 +832,80 @@ while ($data <= $fim) {
             </section>
 
             <section class="secao">
-                <h2 class="secao-titulo">Legenda de status</h2>
-                <div class="legenda">
-                    <div class="legenda-item">
-                        <span class="legenda-badge status-presencial">🏢</span>
-                        <span>Presencial</span>
-                    </div>
-                    <div class="legenda-item">
-                        <span class="legenda-badge status-homeoffice">🏠</span>
-                        <span>Home Office</span>
-                    </div>
-                    <div class="legenda-item">
-                        <span class="legenda-badge status-ferias">🏖️</span>
-                        <span>Férias</span>
-                    </div>
-                    <div class="legenda-item">
-                        <span class="legenda-badge status-afastamento">🚫</span>
-                        <span>Afastamento</span>
-                    </div>
-                    <div class="legenda-item">
-                        <span style="background: #ffe6e6; padding: 4px 8px; border-radius: 3px; border-left: 3px solid #d32f2f;"></span>
-                        <span>Sem presencial no dia</span>
+                <h2 class="secao-titulo">Calendario consolidado de presença</h2>
+                <p class="secao-descricao">Resumo mensal de servidores e estagiários por dia, com classificação por cobertura dos períodos.</p>
+
+                <div class="cc-box">
+                    <div class="cc-wrap">
+                        <div class="cc-legenda">
+                            <div class="cc-legenda-item">
+                                <span class="cc-legenda-cor cc-dia--vermelho"></span>
+                                <span>Algum periodo sem servidor em presencial</span>
+                            </div>
+                            <div class="cc-legenda-item">
+                                <span class="cc-legenda-cor cc-dia--amarelo"></span>
+                                <span>Apenas estagiários presenciais</span>
+                            </div>
+                            <div class="cc-legenda-item">
+                                <span class="cc-legenda-cor cc-dia--verde"></span>
+                                <span>Servidores e estagiários presenciais</span>
+                            </div>
+                            <div class="cc-legenda-item">
+                                <span class="cc-legenda-cor cc-dia--neutro"></span>
+                                <span>Fim de semana (sem escala)</span>
+                            </div>
+                            <div class="cc-legenda-item">
+                                <span class="cc-legenda-cor cc-dia--feriado"></span>
+                                <span>Feriado (padrao quadriculado)</span>
+                            </div>
+                        </div>
+
+                        <div class="cc-calendario">
+                            <div class="cc-semana">Dom</div>
+                            <div class="cc-semana">Seg</div>
+                            <div class="cc-semana">Ter</div>
+                            <div class="cc-semana">Qua</div>
+                            <div class="cc-semana">Qui</div>
+                            <div class="cc-semana">Sex</div>
+                            <div class="cc-semana">Sab</div>
+
+                            <?php
+                            $dia_semana_inicio = (int)(new DateTime($data_inicio))->format('w');
+                            for ($i = 0; $i < $dia_semana_inicio; $i++) {
+                                echo '<div class="cc-dia cc-dia--vazio"></div>';
+                            }
+
+                            foreach ($dias_mes as $dia_info):
+                                $resumoDia = $resumo_presencial_calendario[$dia_info['data']];
+                                $classeDia = $resumoDia['classe'];
+                                $tituloDia = $resumoDia['descricao'];
+                                $classeFeriado = !empty($dia_info['eh_feriado']) ? ' cc-dia--feriado' : '';
+                            ?>
+                                <button
+                                    type="button"
+                                    class="cc-dia <?php echo $classeDia . $classeFeriado; ?>"
+                                    title="<?php echo htmlspecialchars($tituloDia, ENT_QUOTES); ?>"
+                                    data-data="<?php echo htmlspecialchars($dia_info['data'], ENT_QUOTES); ?>"
+                                    data-manha-servidor="<?php echo (int)$resumoDia['manha']['servidor']; ?>"
+                                    data-manha-estagiario="<?php echo (int)$resumoDia['manha']['estagiario']; ?>"
+                                    data-tarde-servidor="<?php echo (int)$resumoDia['tarde']['servidor']; ?>"
+                                    data-tarde-estagiario="<?php echo (int)$resumoDia['tarde']['estagiario']; ?>"
+                                    data-feriado="<?php echo !empty($dia_info['eh_feriado']) ? '1' : '0'; ?>"
+                                    data-feriado-descricao="<?php echo htmlspecialchars((string)($dia_info['descricao_feriado'] ?? ''), ENT_QUOTES); ?>"
+                                    onclick="abrirModalCalendario(this)"
+                                >
+                                    <div class="cc-dia-numero"><?php echo $dia_info['dia']; ?></div>
+                                </button>
+                            <?php endforeach; ?>
+
+                            <?php
+                            $total_celulas = $dia_semana_inicio + count($dias_mes);
+                            $faltantes = (7 - ($total_celulas % 7)) % 7;
+                            for ($i = 0; $i < $faltantes; $i++) {
+                                echo '<div class="cc-dia cc-dia--vazio"></div>';
+                            }
+                            ?>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -627,88 +996,106 @@ while ($data <= $fim) {
                 </div>
             </section>
 
-            <section class="secao">
-                <details class="accordion-matriz">
-                    <summary>Matriz Consolidadora de Escala</summary>
-                    <div class="accordion-matriz-content">
-                        <h3 class="secao-titulo" style="margin-top: 12px;">Matriz Consolidadora</h3>
-                        <p class="secao-descricao">Visualização diária por servidor com todos os status registrados.</p>
-                        <div class="tabela-scroll">
-                            <table class="tabela-limpa">
-                                <thead>
-                                    <tr>
-                                        <th style="width: 180px;">Servidor</th>
-                                        <?php foreach ($dias_mes as $dia_info): ?>
-                                            <th style="width: 60px;">
-                                                <div class="dia-header">
-                                                    <div class="dia-numero"><?php echo $dia_info['dia']; ?></div>
-                                                    <div class="dia-semana">
-                                                        <?php
-                                                        $dias_semana = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
-                                                        echo $dias_semana[$dia_info['dia_semana'] % 7];
-                                                        ?>
-                                                    </div>
-                                                </div>
-                                            </th>
-                                        <?php endforeach; ?>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach ($funcionarios as $func): ?>
-                                        <tr>
-                                            <td class="col-funcionario">
-                                                <?php echo htmlspecialchars($func['nome']); ?>
-                                            </td>
-                                            <?php foreach ($dias_mes as $dia_info): ?>
-                                                <?php
-                                                $data = $dia_info['data'];
-                                                $status_manha = $matriz[$func['id']]['dados'][$data . '_manhã'] ?? null;
-                                                $status_tarde = $matriz[$func['id']]['dados'][$data . '_tarde'] ?? null;
-
-                                                $eh_dia_sem_presencial = $dia_info['eh_util'] &&
-                                                    !temPresencialNoTurno($ano, $mes, $dia_info['dia'], 'manhã') &&
-                                                    !temPresencialNoTurno($ano, $mes, $dia_info['dia'], 'tarde');
-
-                                                $classe_alerta = $eh_dia_sem_presencial ? 'dia-sem-presencial' : '';
-                                                ?>
-                                                <td class="status-cell <?php echo $classe_alerta; ?>">
-                                                    <?php if ($status_manha || $status_tarde): ?>
-                                                        <div>
-                                                            <?php if ($status_manha): ?>
-                                                                <span class="status-badge status-<?php echo $status_manha; ?>">
-                                                                    <?php echo obterIconeStatus($status_manha); ?>
-                                                                </span>
-                                                            <?php endif; ?>
-                                                            <?php if ($status_tarde): ?>
-                                                                <span class="status-badge status-<?php echo $status_tarde; ?>">
-                                                                    <?php echo obterIconeStatus($status_tarde); ?>
-                                                                </span>
-                                                            <?php endif; ?>
-                                                        </div>
-                                                        <?php
-                                                        $contagem = obterContagemStatusPorDia($ano, $mes, $dia_info['dia'], 'manhã');
-                                                        $contagem_tarde = obterContagemStatusPorDia($ano, $mes, $dia_info['dia'], 'tarde');
-                                                        ?>
-                                                        <div class="resumo-dia">
-                                                            <span>Manhã: <?php echo $contagem['presencial']; ?> P</span>
-                                                            <span>Tarde: <?php echo $contagem_tarde['presencial']; ?> P</span>
-                                                        </div>
-                                                    <?php endif; ?>
-                                                </td>
-                                            <?php endforeach; ?>
-                                        </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </details>
-            </section>
         </main>
+    </div>
+
+    <div class="cc-modal" id="ccModalDia" aria-hidden="true">
+        <div class="cc-modal-card" role="dialog" aria-modal="true" aria-labelledby="ccModalTitulo">
+            <div class="cc-modal-header">
+                <h3 class="cc-modal-titulo" id="ccModalTitulo">Detalhes do dia</h3>
+                <button type="button" class="cc-modal-fechar" onclick="fecharModalCalendario()" aria-label="Fechar">&times;</button>
+            </div>
+            <div class="cc-modal-corpo">
+                <div class="cc-modal-alerta" id="ccModalAlertaFeriado"></div>
+                <div class="cc-modal-bloco">
+                    <p class="cc-modal-periodo">Manh&atilde;</p>
+                    <div class="cc-modal-linha">
+                        <span>Servidores</span>
+                        <strong id="ccModalManhaServidor">0</strong>
+                    </div>
+                    <div class="cc-modal-linha">
+                        <span>Estagiarios</span>
+                        <strong id="ccModalManhaEstagiario">0</strong>
+                    </div>
+                </div>
+                <div class="cc-modal-bloco">
+                    <p class="cc-modal-periodo">Tarde</p>
+                    <div class="cc-modal-linha">
+                        <span>Servidores</span>
+                        <strong id="ccModalTardeServidor">0</strong>
+                    </div>
+                    <div class="cc-modal-linha">
+                        <span>Estagiarios</span>
+                        <strong id="ccModalTardeEstagiario">0</strong>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div class="floating-link">
         <a href="index.php" class="btn-primario">← Voltar</a>
     </div>
+
+    <script>
+        function formatarDataModal(dataIso) {
+            const partes = dataIso.split('-');
+            if (partes.length !== 3) return dataIso;
+
+            const ano = partes[0];
+            const mes = parseInt(partes[1], 10);
+            const dia = parseInt(partes[2], 10);
+            const meses = [
+                'janeiro', 'fevereiro', 'marco', 'abril', 'maio', 'junho',
+                'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'
+            ];
+
+            return `${dia} de ${meses[mes - 1]} de ${ano}`;
+        }
+
+        function abrirModalCalendario(el) {
+            const modal = document.getElementById('ccModalDia');
+            const alertaFeriado = document.getElementById('ccModalAlertaFeriado');
+            document.getElementById('ccModalTitulo').textContent = `Detalhes de ${formatarDataModal(el.dataset.data || '')}`;
+            document.getElementById('ccModalManhaServidor').textContent = el.dataset.manhaServidor || '0';
+            document.getElementById('ccModalManhaEstagiario').textContent = el.dataset.manhaEstagiario || '0';
+            document.getElementById('ccModalTardeServidor').textContent = el.dataset.tardeServidor || '0';
+            document.getElementById('ccModalTardeEstagiario').textContent = el.dataset.tardeEstagiario || '0';
+
+            if ((el.dataset.feriado || '0') === '1') {
+                const descricaoFeriado = (el.dataset.feriadoDescricao || '').trim();
+                alertaFeriado.textContent = descricaoFeriado !== ''
+                    ? `Dia cadastrado como feriado: ${descricaoFeriado}.`
+                    : 'Dia cadastrado como feriado.';
+                alertaFeriado.classList.add('visivel');
+            } else {
+                alertaFeriado.textContent = '';
+                alertaFeriado.classList.remove('visivel');
+            }
+
+            modal.classList.add('aberto');
+            modal.setAttribute('aria-hidden', 'false');
+        }
+
+        function fecharModalCalendario() {
+            const modal = document.getElementById('ccModalDia');
+            modal.classList.remove('aberto');
+            modal.setAttribute('aria-hidden', 'true');
+        }
+
+        document.addEventListener('click', function(event) {
+            const modal = document.getElementById('ccModalDia');
+            if (event.target === modal) {
+                fecharModalCalendario();
+            }
+        });
+
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                fecharModalCalendario();
+            }
+        });
+    </script>
 </body>
 </html>
+

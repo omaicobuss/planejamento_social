@@ -19,6 +19,15 @@ CREATE TABLE IF NOT EXISTS registros_regime (
     UNIQUE KEY unique_registro (funcionario_id, data, turno)
 );
 
+-- Tabela de dias sem necessidade de escala (feriados e dias nao trabalhados)
+CREATE TABLE IF NOT EXISTS dias_nao_trabalhados (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    data DATE NOT NULL UNIQUE,
+    tipo ENUM('feriado', 'nao_trabalhado') NOT NULL DEFAULT 'feriado',
+    descricao VARCHAR(120) NULL,
+    data_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Inserir funcionários padrão
 INSERT IGNORE INTO funcionarios (nome) VALUES 
     ('João Silva'),
