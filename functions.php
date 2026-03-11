@@ -7,13 +7,281 @@
 require_once 'config.php';
 
 /**
- * Obter todos os funcionários
+ * Garante que a tabela de funcionarios suporte os campos mais recentes.
+ */
+function garantirEstruturaFuncionarios() {
+    global $conn;
+
+    $colunas = $conn->query("PRAGMA table_info(funcionarios)")->fetchAll();
+    $nomesColunas = array_column($colunas, 'name');
+
+    if (!in_array('cpf', $nomesColunas, true)) {
+        $conn->exec("ALTER TABLE funcionarios ADD COLUMN cpf TEXT");
+    }
+
+    if (!in_array('email', $nomesColunas, true)) {
+        $conn->exec("ALTER TABLE funcionarios ADD COLUMN email TEXT");
+    }
+
+    if (!in_array('supervisor', $nomesColunas, true)) {
+        $conn->exec("ALTER TABLE funcionarios ADD COLUMN supervisor TEXT");
+    }
+
+    if (!in_array('categoria', $nomesColunas, true)) {
+        $conn->exec("ALTER TABLE funcionarios ADD COLUMN categoria TEXT NOT NULL DEFAULT 'servidor'");
+    }
+
+    $conn->exec("UPDATE funcionarios SET categoria = 'servidor' WHERE categoria IS NULL OR categoria = ''");
+    $conn->exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_funcionarios_cpf ON funcionarios(cpf)");
+    $conn->exec("CREATE INDEX IF NOT EXISTS idx_funcionarios_categoria_nome ON funcionarios(categoria, nome)");
+}
+
+garantirEstruturaFuncionarios();
+
+/**
+ * Garante estrutura de configuracoes do sistema.
+ */
+function garantirEstruturaConfiguracoes() {
+    global $conn;
+
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS configuracoes (
+            chave TEXT PRIMARY KEY,
+            valor TEXT NOT NULL
+        )
+    ");
+
+    $senhaAdminAtual = obterConfiguracao('admin_page_password');
+    if ($senhaAdminAtual === null || $senhaAdminAtual === '') {
+        definirSenhaConfiguracao('admin_page_password', 'senha26');
+    }
+
+    $senhaEdicaoAtual = obterConfiguracao('edit_access_password');
+    if ($senhaEdicaoAtual === null || $senhaEdicaoAtual === '') {
+        definirSenhaConfiguracao('edit_access_password', 'senha26');
+    }
+}
+
+/**
+ * Obter configuracao por chave.
+ */
+function obterConfiguracao($chave, $valorPadrao = null) {
+    global $conn;
+
+    $stmt = $conn->prepare("SELECT valor FROM configuracoes WHERE chave = ? LIMIT 1");
+    $stmt->execute([(string)$chave]);
+    $row = $stmt->fetch();
+
+    if (!$row) {
+        return $valorPadrao;
+    }
+
+    return $row['valor'];
+}
+
+/**
+ * Definir configuracao por chave.
+ */
+function definirConfiguracao($chave, $valor) {
+    global $conn;
+
+    $stmt = $conn->prepare("
+        INSERT INTO configuracoes (chave, valor) VALUES (?, ?)
+        ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor
+    ");
+
+    return $stmt->execute([(string)$chave, (string)$valor]);
+}
+
+/**
+ * Definir senha de configuracao com hash.
+ */
+function definirSenhaConfiguracao($chave, $senhaEmTextoPlano) {
+    $senhaEmTextoPlano = trim((string)$senhaEmTextoPlano);
+    if ($senhaEmTextoPlano === '') {
+        return false;
+    }
+
+    $hash = password_hash($senhaEmTextoPlano, PASSWORD_DEFAULT);
+    return definirConfiguracao($chave, $hash);
+}
+
+/**
+ * Verifica senha para uma chave de configuracao.
+ */
+function verificarSenhaConfiguracao($chave, $senhaEmTextoPlano) {
+    $hash = obterConfiguracao($chave);
+    if (!$hash) {
+        return false;
+    }
+
+    return password_verify((string)$senhaEmTextoPlano, $hash);
+}
+
+garantirEstruturaConfiguracoes();
+
+/**
+ * Obter todos os funcionarios
  */
 function obterFuncionarios() {
     global $conn;
-    $sql = "SELECT id, nome FROM funcionarios ORDER BY nome ASC";
+    $sql = "SELECT id, nome, categoria FROM funcionarios
+            ORDER BY CASE WHEN categoria = 'servidor' THEN 0 ELSE 1 END, nome ASC";
     $stmt = $conn->query($sql);
     return $stmt->fetchAll();
+}
+
+/**
+ * Obter funcionarios separados por categoria.
+ */
+function obterFuncionariosPorCategoria() {
+    $funcionarios = obterFuncionarios();
+    $resultado = [
+        'servidores' => [],
+        'estagiarios' => []
+    ];
+
+    foreach ($funcionarios as $funcionario) {
+        if (($funcionario['categoria'] ?? 'servidor') === 'estagiario') {
+            $resultado['estagiarios'][] = $funcionario;
+            continue;
+        }
+
+        $resultado['servidores'][] = $funcionario;
+    }
+
+    return $resultado;
+}
+
+/**
+ * Cadastra um novo funcionario.
+ */
+function cadastrarFuncionario($nomeCompleto, $cpf, $email, $supervisor, $categoria) {
+    global $conn;
+
+    $nomeCompleto = trim((string)$nomeCompleto);
+    $cpfOriginal = trim((string)$cpf);
+    $cpfNumerico = preg_replace('/\D+/', '', $cpfOriginal);
+    $email = trim((string)$email);
+    $supervisor = trim((string)$supervisor);
+    $categoria = trim((string)$categoria);
+
+    if ($nomeCompleto === '' || $cpfOriginal === '' || $email === '') {
+        return ['sucesso' => false, 'mensagem' => 'Preencha nome completo, CPF e e-mail.', 'id' => null];
+    }
+
+    if ($supervisor === '') {
+        $supervisor = 'Supervisor não informado no cadastro';
+    }
+
+    if (!in_array($categoria, ['servidor', 'estagiario'], true)) {
+        return ['sucesso' => false, 'mensagem' => 'Categoria invalida para cadastro.', 'id' => null];
+    }
+
+    if (strlen($cpfNumerico) !== 11) {
+        return ['sucesso' => false, 'mensagem' => 'Informe um CPF com 11 digitos.', 'id' => null];
+    }
+
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        return ['sucesso' => false, 'mensagem' => 'Informe um e-mail valido.', 'id' => null];
+    }
+
+    try {
+        $sql = "INSERT INTO funcionarios (nome, cpf, email, supervisor, categoria)
+                VALUES (?, ?, ?, ?, ?)";
+        $stmt = $conn->prepare($sql);
+        $stmt->execute([$nomeCompleto, $cpfNumerico, $email, $supervisor, $categoria]);
+
+        return ['sucesso' => true, 'mensagem' => 'Cadastro realizado com sucesso.', 'id' => (int)$conn->lastInsertId()];
+    } catch (Throwable $e) {
+        $mensagem = stripos($e->getMessage(), 'idx_funcionarios_cpf') !== false
+            ? 'Ja existe cadastro com este CPF.'
+            : 'Nao foi possivel concluir o cadastro.';
+
+        return ['sucesso' => false, 'mensagem' => $mensagem, 'id' => null];
+    }
+}
+
+/**
+ * Obter pessoas cadastradas com dados completos.
+ */
+function obterPessoasCadastradas() {
+    global $conn;
+
+    $stmt = $conn->query("
+        SELECT id, nome, cpf, email, supervisor, categoria
+        FROM funcionarios
+        ORDER BY CASE WHEN categoria = 'servidor' THEN 0 ELSE 1 END, nome
+    ");
+
+    return $stmt->fetchAll();
+}
+
+/**
+ * Atualizar dados de pessoa cadastrada.
+ */
+function atualizarPessoaCadastrada($id, $nomeCompleto, $cpf, $email, $supervisor, $categoria) {
+    global $conn;
+
+    $id = (int)$id;
+    $nomeCompleto = trim((string)$nomeCompleto);
+    $cpfNumerico = preg_replace('/\D+/', '', trim((string)$cpf));
+    $email = trim((string)$email);
+    $supervisor = trim((string)$supervisor);
+    $categoria = trim((string)$categoria);
+
+    if ($id <= 0) {
+        return ['sucesso' => false, 'mensagem' => 'Pessoa invalida.'];
+    }
+    if ($nomeCompleto === '' || $cpfNumerico === '' || $email === '' || $supervisor === '') {
+        return ['sucesso' => false, 'mensagem' => 'Preencha todos os campos.'];
+    }
+    if (strlen($cpfNumerico) !== 11) {
+        return ['sucesso' => false, 'mensagem' => 'CPF deve conter 11 digitos.'];
+    }
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        return ['sucesso' => false, 'mensagem' => 'E-mail invalido.'];
+    }
+    if (!in_array($categoria, ['servidor', 'estagiario'], true)) {
+        return ['sucesso' => false, 'mensagem' => 'Categoria invalida.'];
+    }
+
+    try {
+        $stmt = $conn->prepare("
+            UPDATE funcionarios
+            SET nome = ?, cpf = ?, email = ?, supervisor = ?, categoria = ?
+            WHERE id = ?
+        ");
+        $stmt->execute([$nomeCompleto, $cpfNumerico, $email, $supervisor, $categoria, $id]);
+        return ['sucesso' => true, 'mensagem' => 'Dados atualizados com sucesso.'];
+    } catch (Throwable $e) {
+        $mensagem = stripos($e->getMessage(), 'idx_funcionarios_cpf') !== false
+            ? 'CPF ja cadastrado para outra pessoa.'
+            : 'Nao foi possivel atualizar os dados.';
+        return ['sucesso' => false, 'mensagem' => $mensagem];
+    }
+}
+
+/**
+ * Obter os 3 primeiros digitos do CPF de um funcionario.
+ */
+function obterPrefixoCpfFuncionario($funcionarioId) {
+    global $conn;
+
+    $stmt = $conn->prepare("SELECT cpf FROM funcionarios WHERE id = ? LIMIT 1");
+    $stmt->execute([(int)$funcionarioId]);
+    $row = $stmt->fetch();
+
+    if (!$row || empty($row['cpf'])) {
+        return null;
+    }
+
+    $cpfNumerico = preg_replace('/\D+/', '', (string)$row['cpf']);
+    if (strlen($cpfNumerico) < 3) {
+        return null;
+    }
+
+    return substr($cpfNumerico, 0, 3);
 }
 
 /**
