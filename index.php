@@ -264,7 +264,7 @@ while ($dataCursor <= $fim) {
     $dias_mes[] = [
         'dia' => (int)$dataCursor->format('d'),
         'data' => $dataIso,
-        'dia_semana' => (int)$dataCursor->format('N'),
+        'dia_semana' => (int)$dataCursor->format('w'),
         'eh_feriado' => $ehFeriado,
         'descricao_feriado' => $ehFeriado ? (string)$mapa_feriados[$dataIso] : ''
     ];
@@ -782,11 +782,9 @@ while ($dataCursor <= $fim) {
 
                             <?php
                             $primeiro_dia = new DateTime($data_inicio);
-                            $dia_semana_inicio = (int)$primeiro_dia->format('N');
-                            if ($dia_semana_inicio !== 7) {
-                                for ($i = 0; $i < $dia_semana_inicio - 1; $i++) {
-                                    echo '<div class="dia outro-mes"></div>';
-                                }
+                            $dia_semana_inicio = (int)$primeiro_dia->format('w'); // 0 = domingo, 6 = sábado
+                            for ($i = 0; $i < $dia_semana_inicio; $i++) {
+                                echo '<div class="dia outro-mes"></div>';
                             }
 
                             foreach ($dias_mes as $dia_info):
@@ -794,7 +792,7 @@ while ($dataCursor <= $fim) {
                                 $dia = $dia_info['dia'];
                                 $status_manha = $regime[$data . '_manhã'] ?? null;
                                 $status_tarde = $regime[$data . '_tarde'] ?? null;
-                                $eh_fim_semana = $dia_info['dia_semana'] > 5;
+                                $eh_fim_semana = $dia_info['dia_semana'] === 0 || $dia_info['dia_semana'] === 6;
                                 $eh_feriado = !empty($dia_info['eh_feriado']);
                                 $classe_dia = 'dia '
                                     . ($eh_fim_semana ? 'outro-mes ' : '')
@@ -835,7 +833,7 @@ while ($dataCursor <= $fim) {
                             <?php endforeach; ?>
 
                             <?php
-                            $total_dias = count($dias_mes) + ($dia_semana_inicio === 7 ? 0 : $dia_semana_inicio - 1);
+                            $total_dias = count($dias_mes) + $dia_semana_inicio;
                             $dias_faltantes = (42 - $total_dias) % 7;
                             for ($i = 0; $i < $dias_faltantes; $i++) {
                                 echo '<div class="dia outro-mes"></div>';

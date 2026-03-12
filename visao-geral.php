@@ -61,13 +61,14 @@ $fim = new DateTime($data_fim);
 
 while ($data <= $fim) {
     $dataIso = $data->format('Y-m-d');
+    $diaSemana = (int)$data->format('w');
     $ehFeriado = isset($mapa_feriados[$dataIso]);
     $dias_mes[] = [
         'dia' => (int)$data->format('d'),
         'data' => $dataIso,
-        'dia_semana' => $data->format('N'),
-        'eh_util' => $data->format('N') >= 1
-            && $data->format('N') <= 5
+        'dia_semana' => $diaSemana,
+        'eh_util' => $diaSemana >= 1
+            && $diaSemana <= 5
             && !isset($mapa_dias_nao_trabalhados[$dataIso]),
         'eh_feriado' => $ehFeriado,
         'descricao_feriado' => $ehFeriado ? (string)$mapa_feriados[$dataIso]['descricao'] : ''
@@ -943,7 +944,7 @@ foreach ($dias_mes as $dia_info) {
                                     <div class="dia-semana">
                                         <?php 
                                         $dias_semana = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
-                                        echo $dias_semana[$dia_info['dia_semana'] % 7];
+                                        echo $dias_semana[$dia_info['dia_semana']];
                                         ?>
                                     </div>
                                 </div>
