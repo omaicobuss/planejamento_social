@@ -195,15 +195,15 @@ function cadastrarFuncionario($nomeCompleto, $cpf, $email, $supervisor, $categor
     }
 
     if (!in_array($categoria, ['servidor', 'estagiario'], true)) {
-        return ['sucesso' => false, 'mensagem' => 'Categoria invalida para cadastro.', 'id' => null];
+        return ['sucesso' => false, 'mensagem' => 'Categoria inválida para cadastro.', 'id' => null];
     }
 
     if (strlen($cpfNumerico) !== 11) {
-        return ['sucesso' => false, 'mensagem' => 'Informe um CPF com 11 digitos.', 'id' => null];
+        return ['sucesso' => false, 'mensagem' => 'Informe um CPF com 11 dígitos.', 'id' => null];
     }
 
     if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        return ['sucesso' => false, 'mensagem' => 'Informe um e-mail valido.', 'id' => null];
+        return ['sucesso' => false, 'mensagem' => 'Informe um e-mail válido.', 'id' => null];
     }
 
     try {
@@ -215,8 +215,8 @@ function cadastrarFuncionario($nomeCompleto, $cpf, $email, $supervisor, $categor
         return ['sucesso' => true, 'mensagem' => 'Cadastro realizado com sucesso.', 'id' => (int)$conn->lastInsertId()];
     } catch (Throwable $e) {
         $mensagem = stripos($e->getMessage(), 'idx_funcionarios_cpf') !== false
-            ? 'Ja existe cadastro com este CPF.'
-            : 'Nao foi possivel concluir o cadastro.';
+            ? 'Já existe cadastro com este CPF.'
+            : 'Não foi possível concluir o cadastro.';
 
         return ['sucesso' => false, 'mensagem' => $mensagem, 'id' => null];
     }
@@ -251,19 +251,19 @@ function atualizarPessoaCadastrada($id, $nomeCompleto, $cpf, $email, $supervisor
     $categoria = trim((string)$categoria);
 
     if ($id <= 0) {
-        return ['sucesso' => false, 'mensagem' => 'Pessoa invalida.'];
+        return ['sucesso' => false, 'mensagem' => 'Pessoa inválida.'];
     }
     if ($nomeCompleto === '' || $cpfNumerico === '' || $email === '' || $supervisor === '') {
         return ['sucesso' => false, 'mensagem' => 'Preencha todos os campos.'];
     }
     if (strlen($cpfNumerico) !== 11) {
-        return ['sucesso' => false, 'mensagem' => 'CPF deve conter 11 digitos.'];
+        return ['sucesso' => false, 'mensagem' => 'CPF deve conter 11 dígitos.'];
     }
     if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        return ['sucesso' => false, 'mensagem' => 'E-mail invalido.'];
+        return ['sucesso' => false, 'mensagem' => 'E-mail inválido.'];
     }
     if (!in_array($categoria, ['servidor', 'estagiario'], true)) {
-        return ['sucesso' => false, 'mensagem' => 'Categoria invalida.'];
+        return ['sucesso' => false, 'mensagem' => 'Categoria inválida.'];
     }
 
     try {
@@ -276,8 +276,8 @@ function atualizarPessoaCadastrada($id, $nomeCompleto, $cpf, $email, $supervisor
         return ['sucesso' => true, 'mensagem' => 'Dados atualizados com sucesso.'];
     } catch (Throwable $e) {
         $mensagem = stripos($e->getMessage(), 'idx_funcionarios_cpf') !== false
-            ? 'CPF ja cadastrado para outra pessoa.'
-            : 'Nao foi possivel atualizar os dados.';
+            ? 'CPF já cadastrado para outra pessoa.'
+            : 'Não foi possível atualizar os dados.';
         return ['sucesso' => false, 'mensagem' => $mensagem];
     }
 }
@@ -325,11 +325,11 @@ function salvarDiaNaoTrabalhado($data, $tipo, $descricao = '') {
     $dataObj = DateTime::createFromFormat('Y-m-d', $data);
     $dataValida = $dataObj && $dataObj->format('Y-m-d') === $data;
     if (!$dataValida) {
-        return ['sucesso' => false, 'mensagem' => 'Informe uma data valida.'];
+        return ['sucesso' => false, 'mensagem' => 'Informe uma data válida.'];
     }
 
     if (!in_array($tipo, ['feriado', 'nao_trabalhado'], true)) {
-        return ['sucesso' => false, 'mensagem' => 'Tipo de dia invalido.'];
+        return ['sucesso' => false, 'mensagem' => 'Tipo de dia inválido.'];
     }
 
     try {
@@ -344,7 +344,7 @@ function salvarDiaNaoTrabalhado($data, $tipo, $descricao = '') {
 
         return ['sucesso' => true, 'mensagem' => 'Dia salvo com sucesso.'];
     } catch (Throwable $e) {
-        return ['sucesso' => false, 'mensagem' => 'Nao foi possivel salvar o dia informado.'];
+        return ['sucesso' => false, 'mensagem' => 'Não foi possível salvar o dia informado.'];
     }
 }
 
@@ -356,14 +356,14 @@ function excluirDiaNaoTrabalhado($id) {
 
     $id = (int)$id;
     if ($id <= 0) {
-        return ['sucesso' => false, 'mensagem' => 'Dia invalido para exclusao.'];
+        return ['sucesso' => false, 'mensagem' => 'Dia inválido para exclusão.'];
     }
 
     $stmt = $conn->prepare("DELETE FROM dias_nao_trabalhados WHERE id = ?");
     $ok = $stmt->execute([$id]);
 
     if (!$ok) {
-        return ['sucesso' => false, 'mensagem' => 'Nao foi possivel excluir o dia informado.'];
+        return ['sucesso' => false, 'mensagem' => 'Não foi possível excluir o dia informado.'];
     }
 
     return ['sucesso' => true, 'mensagem' => 'Dia removido com sucesso.'];

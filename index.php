@@ -1,12 +1,101 @@
 ﻿<?php
 /**
- * Pagina de Registro de Regime de Trabalho
- * Sistema de Gestao de Regime de Trabalho
+ * Página de Registro de Regime de Trabalho
+ * Sistema de Gestão de Regime de Trabalho
  */
 
 require_once 'functions.php';
+@ini_set('session.use_cookies', '1');
+@ini_set('session.use_only_cookies', '1');
+@ini_set('session.use_strict_mode', '1');
 if (session_status() !== PHP_SESSION_ACTIVE) {
+    session_set_cookie_params([
+        'lifetime' => 0,
+        'path' => '/',
+        'secure' => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
+        'httponly' => true,
+        'samesite' => 'Lax'
+    ]);
     session_start();
+}
+header('Cache-Control: private, no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
+header('Expires: 0');
+
+function codificarTokenBase64Url($valor) {
+    return rtrim(strtr(base64_encode((string)$valor), '+/', '-_'), '=');
+}
+
+function decodificarTokenBase64Url($valor) {
+    $valor = strtr((string)$valor, '-_', '+/');
+    $resto = strlen($valor) % 4;
+    if ($resto !== 0) {
+        $valor .= str_repeat('=', 4 - $resto);
+    }
+
+    return base64_decode($valor, true);
+}
+
+function obterChaveTokenLiberacaoCalendario() {
+    $semente = (string)obterConfiguracao('edit_access_password', '');
+    if ($semente === '') {
+        $semente = __FILE__;
+    }
+
+    return hash('sha256', 'planejamento_social:' . $semente);
+}
+
+function gerarTokenLiberacaoCalendario($funcionarioId, $ttlSegundos = 43200) {
+    $funcionarioId = (int)$funcionarioId;
+    $expiraEm = time() + max(300, (int)$ttlSegundos);
+    $payload = $funcionarioId . '|' . $expiraEm;
+    $assinatura = hash_hmac('sha256', $payload, obterChaveTokenLiberacaoCalendario());
+
+    return codificarTokenBase64Url($payload . '|' . $assinatura);
+}
+
+function validarTokenLiberacaoCalendario($token, $funcionarioEsperado = null) {
+    $token = trim((string)$token);
+    if ($token === '') {
+        return null;
+    }
+
+    $bruto = decodificarTokenBase64Url($token);
+    if ($bruto === false) {
+        return null;
+    }
+
+    $partes = explode('|', $bruto, 3);
+    if (count($partes) !== 3) {
+        return null;
+    }
+
+    [$funcionarioIdBruto, $expiraEmBruto, $assinaturaInformada] = $partes;
+    if (!ctype_digit($funcionarioIdBruto) || !ctype_digit($expiraEmBruto)) {
+        return null;
+    }
+
+    $funcionarioId = (int)$funcionarioIdBruto;
+    $expiraEm = (int)$expiraEmBruto;
+    if ($funcionarioId <= 0 || $expiraEm < time()) {
+        return null;
+    }
+
+    if ($funcionarioEsperado !== null && $funcionarioId !== (int)$funcionarioEsperado) {
+        return null;
+    }
+
+    $payload = $funcionarioId . '|' . $expiraEm;
+    $assinaturaEsperada = hash_hmac('sha256', $payload, obterChaveTokenLiberacaoCalendario());
+    if (!hash_equals($assinaturaEsperada, (string)$assinaturaInformada)) {
+        return null;
+    }
+
+    return [
+        'funcionario_id' => $funcionarioId,
+        'expira_em' => $expiraEm,
+        'token' => $token
+    ];
 }
 
 $ano = isset($_GET['ano']) ? (int)$_GET['ano'] : (int)date('Y');
@@ -19,8 +108,26 @@ if ($ano < 2020 || $ano > 2030) {
 }
 
 $mensagem = '';
+$token_liberacao_informado = (string)($_POST['acesso'] ?? ($_GET['acesso'] ?? ''));
+$dados_token_liberacao = validarTokenLiberacaoCalendario($token_liberacao_informado);
+$token_liberacao_ativo = $dados_token_liberacao !== null ? $dados_token_liberacao['token'] : '';
+
 $funcionario_id = isset($_GET['funcionario_id']) ? (int)$_GET['funcionario_id'] : null;
+if ($funcionario_id === null && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['funcionario_id'])) {
+    $funcionario_id = (int)$_POST['funcionario_id'];
+}
+
 $funcionario_liberado_id = isset($_SESSION['funcionario_liberado_id']) ? (int)$_SESSION['funcionario_liberado_id'] : null;
+if ($funcionario_liberado_id === null && $dados_token_liberacao !== null) {
+    $funcionario_liberado_id = (int)$dados_token_liberacao['funcionario_id'];
+}
+if ($dados_token_liberacao !== null && $funcionario_liberado_id === (int)$dados_token_liberacao['funcionario_id']) {
+    $_SESSION['funcionario_liberado_id'] = $funcionario_liberado_id;
+}
+if ($token_liberacao_ativo === '' && $funcionario_liberado_id !== null && $funcionario_liberado_id > 0) {
+    $token_liberacao_ativo = gerarTokenLiberacaoCalendario($funcionario_liberado_id);
+}
+$query_acesso = $token_liberacao_ativo !== '' ? '&acesso=' . rawurlencode($token_liberacao_ativo) : '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cadastrar_funcionario'])) {
     $resultadoCadastro = cadastrarFuncionario(
@@ -34,7 +141,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cadastrar_funcionario
     if ($resultadoCadastro['sucesso']) {
         $funcionario_id = (int)$resultadoCadastro['id'];
         $mensagem = '<div class="alert alert-success alert-dismissible fade show" role="alert">
-                        Cadastro concluido com sucesso.
+                        Cadastro concluído com sucesso.
                         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                     </div>';
     } else {
@@ -55,22 +162,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['liberar_calendario'])
 
     if ($cpf_prefixo_cadastrado === null) {
         $mensagem = '<div class="alert alert-danger alert-dismissible fade show" role="alert">
-                        Nao foi possivel liberar: CPF nao cadastrado para esta pessoa.
+                        Não foi possível liberar: CPF não cadastrado para esta pessoa.
                         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                     </div>';
     } elseif (!preg_match('/^\d{3}$/', $cpf_prefixo_informado)) {
         $mensagem = '<div class="alert alert-danger alert-dismissible fade show" role="alert">
-                        Informe exatamente os 3 primeiros digitos do CPF.
+                        Informe exatamente os 3 primeiros dígitos do CPF.
                         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                     </div>';
     } elseif ($cpf_prefixo_informado !== $cpf_prefixo_cadastrado) {
         $mensagem = '<div class="alert alert-danger alert-dismissible fade show" role="alert">
-                        Os 3 primeiros digitos do CPF nao conferem.
+                        Os 3 primeiros dígitos do CPF não conferem.
                         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                     </div>';
     } else {
         $_SESSION['funcionario_liberado_id'] = $func_id;
-        header('Location: ?funcionario_id=' . $func_id . '&ano=' . $ano_form . '&mes=' . $mes_form);
+        $token_liberacao_ativo = gerarTokenLiberacaoCalendario($func_id);
+        header('Location: ?funcionario_id=' . $func_id . '&ano=' . $ano_form . '&mes=' . $mes_form . '&acesso=' . rawurlencode($token_liberacao_ativo));
         exit;
     }
 }
@@ -80,10 +188,13 @@ $pode_editar_calendario = $funcionario_id !== null && $funcionario_liberado_id =
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['salvar'])) {
     $func_id = (int)($_POST['funcionario_id'] ?? 0);
     $data = $_POST['data'] ?? '';
+    $token_salvar = (string)($_POST['acesso'] ?? '');
+    $liberacao_por_token = validarTokenLiberacaoCalendario($token_salvar, $func_id) !== null;
+    $liberado_para_salvar = $pode_editar_calendario || $liberacao_por_token;
 
-    if (!$pode_editar_calendario || $func_id !== $funcionario_id) {
+    if (!$liberado_para_salvar || $func_id !== $funcionario_id) {
         $mensagem = '<div class="alert alert-danger alert-dismissible fade show" role="alert">
-                        Calendario bloqueado. Selecione o nome e valide os 3 digitos do CPF para editar.
+                        Calendário bloqueado. Selecione o nome e valide os 3 dígitos do CPF para editar.
                         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                     </div>';
     } else {
@@ -448,33 +559,53 @@ while ($dataCursor <= $fim) {
             filter: brightness(0) invert(1);
         }
 
-        .floating-link {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            z-index: 1000;
+        .secao-visao-geral {
             display: flex;
-            flex-direction: column;
-            gap: 8px;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 18px 20px;
+            border: 1px solid #bfdbfe;
+            background: linear-gradient(135deg, #eff6ff, #dbeafe);
         }
 
-        .btn-primario {
-            background-color: #2563eb;
+        .secao-visao-geral .secao-descricao {
+            margin: 0;
+            max-width: 780px;
+        }
+
+        .btn-visao-geral {
+            background: linear-gradient(135deg, #1d4ed8, #1e40af);
             color: #fff;
             border: none;
             border-radius: 6px;
-            padding: 8px 14px;
-            font-size: 0.9rem;
-            cursor: pointer;
+            padding: 10px 16px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            white-space: nowrap;
             text-decoration: none;
             display: inline-flex;
             align-items: center;
             gap: 6px;
+            box-shadow: 0 4px 12px rgba(29, 78, 216, 0.22);
         }
 
-        .btn-primario:hover {
-            background-color: #1d4ed8;
+        .btn-visao-geral:hover {
+            background: linear-gradient(135deg, #1e40af, #1e3a8a);
             color: #fff;
+            transform: translateY(-1px);
+            transition: all 0.2s ease;
+        }
+
+        .modal-footer-acesso {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 8px;
+        }
+
+        .modal-footer-acesso .btn {
+            width: 100%;
+            margin: 0;
         }
 
         @media (max-width: 900px) {
@@ -505,6 +636,16 @@ while ($dataCursor <= $fim) {
                 min-height: 72px;
                 padding: 8px;
             }
+
+            .secao-visao-geral {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .btn-visao-geral {
+                justify-content: center;
+                width: 100%;
+            }
         }
     </style>
 </head>
@@ -516,6 +657,16 @@ while ($dataCursor <= $fim) {
         </header>
 
         <main class="pg-container">
+            <section class="secao secao-visao-geral">
+                <div>
+                    <h2 class="secao-titulo">Visão geral do planejamento</h2>
+                    <p class="secao-descricao">Acompanhe rapidamente a cobertura presencial e os períodos críticos do mês em uma visão consolidada.</p>
+                </div>
+                <a href="visao-geral.php?ano=<?php echo (int)$ano; ?>&mes=<?php echo (int)$mes; ?>" class="btn-visao-geral">
+                    Ver visão geral
+                </a>
+            </section>
+
             <?php if ($mensagem): ?>
                 <div class="mensagem-box"><?php echo $mensagem; ?></div>
             <?php endif; ?>
@@ -541,7 +692,8 @@ while ($dataCursor <= $fim) {
                                                    class="func-item <?php echo (int)$func['id'] === (int)$funcionario_id ? 'active' : ''; ?>"
                                                    data-bs-toggle="modal"
                                                    data-bs-target="#modalAcesso"
-                                                   onclick="abrirModalAcesso(<?php echo (int)$func['id']; ?>, '<?php echo htmlspecialchars($func['nome'], ENT_QUOTES); ?>')">
+                                                   data-funcionario-id="<?php echo (int)$func['id']; ?>"
+                                                   data-funcionario-nome="<?php echo htmlspecialchars($func['nome'], ENT_QUOTES); ?>">
                                                     <?php echo htmlspecialchars($func['nome']); ?>
                                                 </button>
                                             <?php endforeach; ?>
@@ -568,7 +720,8 @@ while ($dataCursor <= $fim) {
                                                    class="func-item <?php echo (int)$func['id'] === (int)$funcionario_id ? 'active' : ''; ?>"
                                                    data-bs-toggle="modal"
                                                    data-bs-target="#modalAcesso"
-                                                   onclick="abrirModalAcesso(<?php echo (int)$func['id']; ?>, '<?php echo htmlspecialchars($func['nome'], ENT_QUOTES); ?>')">
+                                                   data-funcionario-id="<?php echo (int)$func['id']; ?>"
+                                                   data-funcionario-nome="<?php echo htmlspecialchars($func['nome'], ENT_QUOTES); ?>">
                                                     <?php echo htmlspecialchars($func['nome']); ?>
                                                 </button>
                                             <?php endforeach; ?>
@@ -598,7 +751,7 @@ while ($dataCursor <= $fim) {
                         <?php endif; ?>
 
                         <div class="navegacao-mes">
-                            <a href="?funcionario_id=<?php echo $funcionario_id; ?>&ano=<?php echo $mes === 1 ? $ano - 1 : $ano; ?>&mes=<?php echo $mes === 1 ? 12 : $mes - 1; ?>" class="btn-nav">
+                            <a href="?funcionario_id=<?php echo $funcionario_id; ?>&ano=<?php echo $mes === 1 ? $ano - 1 : $ano; ?>&mes=<?php echo $mes === 1 ? 12 : $mes - 1; ?><?php echo $query_acesso; ?>" class="btn-nav">
                                 ← Anterior
                             </a>
                             <div class="mes-centro">
@@ -609,13 +762,13 @@ while ($dataCursor <= $fim) {
                                     <div class="mes-pessoa">Pessoa selecionada: <strong><?php echo htmlspecialchars($nome_funcionario_selecionado); ?></strong></div>
                                 <?php endif; ?>
                             </div>
-                            <a href="?funcionario_id=<?php echo $funcionario_id; ?>&ano=<?php echo $mes === 12 ? $ano + 1 : $ano; ?>&mes=<?php echo $mes === 12 ? 1 : $mes + 1; ?>" class="btn-nav">
-                                Proximo →
+                            <a href="?funcionario_id=<?php echo $funcionario_id; ?>&ano=<?php echo $mes === 12 ? $ano + 1 : $ano; ?>&mes=<?php echo $mes === 12 ? 1 : $mes + 1; ?><?php echo $query_acesso; ?>" class="btn-nav">
+                                Próximo →
                             </a>
                         </div>
 
                         <?php if (!empty($mapa_feriados)): ?>
-                            <div class="text-muted small mb-2">Dias com padrao quadriculado indicam feriado.</div>
+                            <div class="text-muted small mb-2">Dias com padrão quadriculado indicam feriado.</div>
                         <?php endif; ?>
 
                         <div class="calendario">
@@ -661,7 +814,10 @@ while ($dataCursor <= $fim) {
                                      <?php endif; ?>
                                      <?php if ($pode_editar_calendario): ?>
                                          data-bs-toggle="modal" data-bs-target="#modalDia"
-                                         onclick="abrirModalDia('<?php echo $data; ?>', <?php echo $funcionario_id; ?>, '<?php echo htmlspecialchars((string)($status_manha ?? ''), ENT_QUOTES); ?>', '<?php echo htmlspecialchars((string)($status_tarde ?? ''), ENT_QUOTES); ?>')"
+                                         data-dia="<?php echo htmlspecialchars($data, ENT_QUOTES); ?>"
+                                         data-funcionario-id="<?php echo (int)$funcionario_id; ?>"
+                                         data-status-manha="<?php echo htmlspecialchars((string)($status_manha ?? ''), ENT_QUOTES); ?>"
+                                         data-status-tarde="<?php echo htmlspecialchars((string)($status_tarde ?? ''), ENT_QUOTES); ?>"
                                      <?php endif; ?>>
                                     <div class="dia-numero"><?php echo $dia; ?></div>
                                     <?php if ($eh_feriado): ?>
@@ -709,11 +865,12 @@ while ($dataCursor <= $fim) {
                         <input type="hidden" name="funcionario_id" id="acessoFuncionarioId" value="">
                         <input type="hidden" name="ano" value="<?php echo (int)$ano; ?>">
                         <input type="hidden" name="mes" value="<?php echo (int)$mes; ?>">
+                        <input type="hidden" name="acesso" value="<?php echo htmlspecialchars($token_liberacao_ativo, ENT_QUOTES); ?>">
 
                         <p class="mb-2">Nome selecionado: <strong id="acessoFuncionarioNome"></strong></p>
 
                         <div class="mb-2">
-                            <label class="form-label" for="acessoCpfPrefixo">Informe os 3 primeiros digitos do CPF</label>
+                            <label class="form-label" for="acessoCpfPrefixo">Informe os 3 primeiros dígitos do CPF</label>
                             <input
                                 class="form-control"
                                 type="text"
@@ -727,11 +884,11 @@ while ($dataCursor <= $fim) {
                         </div>
 
                     </div>
-                    <div class="modal-footer">
+                    <div class="modal-footer modal-footer-acesso">
+                        <button type="submit" class="btn btn-primary">Liberar preenchimento</button>
                         <a href="visao-geral.php?ano=<?php echo (int)$ano; ?>&mes=<?php echo (int)$mes; ?>" class="btn btn-outline-secondary">
                             Quero apenas visualizar o planejamento
                         </a>
-                        <button type="submit" class="btn btn-primary">Liberar preenchimento</button>
                     </div>
                 </form>
             </div>
@@ -749,17 +906,18 @@ while ($dataCursor <= $fim) {
                     <div class="modal-body">
                         <input type="hidden" name="funcionario_id" id="modalFuncionarioId" value="">
                         <input type="hidden" name="data" id="modalData" value="">
+                        <input type="hidden" name="acesso" value="<?php echo htmlspecialchars($token_liberacao_ativo, ENT_QUOTES); ?>">
 
                         <div class="mb-3">
                             <label class="form-label"><strong>Data: <span id="modalDataExibicao"></span></strong></label>
                         </div>
 
                         <div class="mb-3">
-                            <label class="form-label"><strong>Manha</strong></label>
-                            <div class="form-check"><input class="form-check-input" type="radio" name="status_manha" value="" id="manha_nao_definido" checked><label class="form-check-label" for="manha_nao_definido">Nao definido</label></div>
+                            <label class="form-label"><strong>Manhã</strong></label>
+                            <div class="form-check"><input class="form-check-input" type="radio" name="status_manha" value="" id="manha_nao_definido" checked><label class="form-check-label" for="manha_nao_definido">Não definido</label></div>
                             <div class="form-check"><input class="form-check-input" type="radio" name="status_manha" value="presencial" id="manha_presencial"><label class="form-check-label" for="manha_presencial">🏢 Presencial</label></div>
                             <div class="form-check"><input class="form-check-input" type="radio" name="status_manha" value="homeoffice" id="manha_homeoffice"><label class="form-check-label" for="manha_homeoffice">🏠 Home Office</label></div>
-                            <div class="form-check"><input class="form-check-input" type="radio" name="status_manha" value="férias" id="manha_ferias"><label class="form-check-label" for="manha_ferias">🏖️ Ferias</label></div>
+                            <div class="form-check"><input class="form-check-input" type="radio" name="status_manha" value="férias" id="manha_ferias"><label class="form-check-label" for="manha_ferias">🏖️ Férias</label></div>
                             <div class="form-check"><input class="form-check-input" type="radio" name="status_manha" value="afastamento" id="manha_afastamento"><label class="form-check-label" for="manha_afastamento">🚫 Afastamento</label></div>
                         </div>
 
@@ -767,10 +925,10 @@ while ($dataCursor <= $fim) {
 
                         <div class="mb-3">
                             <label class="form-label"><strong>Tarde</strong></label>
-                            <div class="form-check"><input class="form-check-input" type="radio" name="status_tarde" value="" id="tarde_nao_definido" checked><label class="form-check-label" for="tarde_nao_definido">Nao definido</label></div>
+                            <div class="form-check"><input class="form-check-input" type="radio" name="status_tarde" value="" id="tarde_nao_definido" checked><label class="form-check-label" for="tarde_nao_definido">Não definido</label></div>
                             <div class="form-check"><input class="form-check-input" type="radio" name="status_tarde" value="presencial" id="tarde_presencial"><label class="form-check-label" for="tarde_presencial">🏢 Presencial</label></div>
                             <div class="form-check"><input class="form-check-input" type="radio" name="status_tarde" value="homeoffice" id="tarde_homeoffice"><label class="form-check-label" for="tarde_homeoffice">🏠 Home Office</label></div>
-                            <div class="form-check"><input class="form-check-input" type="radio" name="status_tarde" value="férias" id="tarde_ferias"><label class="form-check-label" for="tarde_ferias">🏖️ Ferias</label></div>
+                            <div class="form-check"><input class="form-check-input" type="radio" name="status_tarde" value="férias" id="tarde_ferias"><label class="form-check-label" for="tarde_ferias">🏖️ Férias</label></div>
                             <div class="form-check"><input class="form-check-input" type="radio" name="status_tarde" value="afastamento" id="tarde_afastamento"><label class="form-check-label" for="tarde_afastamento">🚫 Afastamento</label></div>
                         </div>
                     </div>
@@ -787,7 +945,7 @@ while ($dataCursor <= $fim) {
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header modal-header-custom">
-                    <h5 class="modal-title">Cadastro de funcionario</h5>
+                    <h5 class="modal-title">Cadastro de funcionário</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <form method="POST" autocomplete="off">
@@ -817,55 +975,14 @@ while ($dataCursor <= $fim) {
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
                         <button type="submit" class="btn btn-outline-primary" name="categoria" value="servidor">Salvar como servidor</button>
-                        <button type="submit" class="btn btn-primary" name="categoria" value="estagiario">Salvar como estagiario</button>
+                        <button type="submit" class="btn btn-primary" name="categoria" value="estagiario">Salvar como estagiário</button>
                     </div>
                 </form>
             </div>
         </div>
     </div>
 
-    <div class="floating-link">
-        <a href="visao-geral.php" class="btn-primario">Ver visao geral</a>
-    </div>
-
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        function abrirModalAcesso(funcionarioId, nomeFuncionario) {
-            document.getElementById('acessoFuncionarioId').value = funcionarioId;
-            document.getElementById('acessoFuncionarioNome').textContent = nomeFuncionario;
-            document.getElementById('acessoCpfPrefixo').value = '';
-        }
-
-        function abrirModalDia(data, funcionarioId, statusManha, statusTarde) {
-            const dataObj = new Date(data + 'T00:00:00');
-            const dataFormatada = dataObj.toLocaleDateString('pt-BR', {
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric'
-            });
-
-            document.getElementById('modalData').value = data;
-            document.getElementById('modalFuncionarioId').value = funcionarioId;
-            document.getElementById('modalDataExibicao').textContent = dataFormatada;
-
-            document.querySelectorAll('input[name="status_manha"]').forEach(el => el.checked = false);
-            document.querySelectorAll('input[name="status_tarde"]').forEach(el => el.checked = false);
-
-            if (statusManha) {
-                const manhaRadio = document.querySelector(`input[name="status_manha"][value="${statusManha}"]`);
-                if (manhaRadio) manhaRadio.checked = true;
-            } else {
-                document.getElementById('manha_nao_definido').checked = true;
-            }
-
-            if (statusTarde) {
-                const tardeRadio = document.querySelector(`input[name="status_tarde"][value="${statusTarde}"]`);
-                if (tardeRadio) tardeRadio.checked = true;
-            } else {
-                document.getElementById('tarde_nao_definido').checked = true;
-            }
-        }
-    </script>
+    <script src="assets/index.js?v=<?php echo (int)filemtime(__DIR__ . '/assets/index.js'); ?>"></script>
 </body>
 </html>
