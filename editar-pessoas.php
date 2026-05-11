@@ -1,15 +1,136 @@
 <?php
 require_once 'functions.php';
 
+@ini_set('session.use_cookies', '1');
+@ini_set('session.use_only_cookies', '1');
+@ini_set('session.use_strict_mode', '1');
 if (session_status() !== PHP_SESSION_ACTIVE) {
+    session_set_cookie_params([
+        'lifetime' => 0,
+        'path' => '/',
+        'secure' => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
+        'httponly' => true,
+        'samesite' => 'Lax'
+    ]);
     session_start();
 }
 
 $mensagem = '';
 $adminAutenticado = !empty($_SESSION['admin_page_authenticated']);
+$acoesProtegidas = [
+    'salvar_senha_edicao',
+    'salvar_pessoa',
+    'salvar_dia_nao_trabalhado',
+    'excluir_dia_nao_trabalhado'
+];
+$acaoPendenteCodificada = '';
+
+function codificarAcaoPendente($post) {
+    if (!is_array($post) || $post === []) {
+        return '';
+    }
+
+    $json = json_encode($post);
+    if ($json === false) {
+        return '';
+    }
+
+    return base64_encode($json);
+}
+
+function decodificarAcaoPendente($valor) {
+    $valor = trim((string)$valor);
+    if ($valor === '') {
+        return null;
+    }
+
+    $json = base64_decode($valor, true);
+    if ($json === false) {
+        return null;
+    }
+
+    $dados = json_decode($json, true);
+    return is_array($dados) ? $dados : null;
+}
+
+function processarAcaoAdministrativa($post, &$mensagem) {
+    if (isset($post['salvar_senha_edicao'])) {
+        $novaSenha = (string)($post['nova_senha_edicao'] ?? '');
+        $confirmacao = (string)($post['confirmar_senha_edicao'] ?? '');
+
+        if (trim($novaSenha) === '') {
+            $mensagem = '<div class="alert alert-danger" role="alert">Informe a nova senha de edicao.</div>';
+        } elseif ($novaSenha !== $confirmacao) {
+            $mensagem = '<div class="alert alert-danger" role="alert">Confirmacao da senha de edicao nao confere.</div>';
+        } elseif (definirSenhaConfiguracao('edit_access_password', $novaSenha)) {
+            $mensagem = '<div class="alert alert-success" role="alert">Senha de edicao atualizada com sucesso.</div>';
+        } else {
+            $mensagem = '<div class="alert alert-danger" role="alert">Nao foi possivel atualizar a senha de edicao.</div>';
+        }
+
+        return;
+    }
+
+    if (isset($post['salvar_pessoa'])) {
+        $resultado = atualizarPessoaCadastrada(
+            $post['pessoa_id'] ?? 0,
+            $post['nome'] ?? '',
+            $post['cpf'] ?? '',
+            $post['email'] ?? '',
+            $post['supervisor'] ?? '',
+            $post['categoria'] ?? ''
+        );
+
+        if ($resultado['sucesso']) {
+            $mensagem = '<div class="alert alert-success" role="alert">' . htmlspecialchars($resultado['mensagem']) . '</div>';
+        } else {
+            $mensagem = '<div class="alert alert-danger" role="alert">' . htmlspecialchars($resultado['mensagem']) . '</div>';
+        }
+
+        return;
+    }
+
+    if (isset($post['salvar_dia_nao_trabalhado'])) {
+        $resultadoDia = salvarDiaNaoTrabalhado(
+            $post['data_dia_nao_trabalhado'] ?? '',
+            $post['tipo_dia_nao_trabalhado'] ?? '',
+            $post['descricao_dia_nao_trabalhado'] ?? ''
+        );
+
+        if ($resultadoDia['sucesso']) {
+            $mensagem = '<div class="alert alert-success" role="alert">' . htmlspecialchars($resultadoDia['mensagem']) . '</div>';
+        } else {
+            $mensagem = '<div class="alert alert-danger" role="alert">' . htmlspecialchars($resultadoDia['mensagem']) . '</div>';
+        }
+
+        return;
+    }
+
+    if (isset($post['excluir_dia_nao_trabalhado'])) {
+        $resultadoDia = excluirDiaNaoTrabalhado($post['dia_nao_trabalhado_id'] ?? 0);
+
+        if ($resultadoDia['sucesso']) {
+            $mensagem = '<div class="alert alert-success" role="alert">' . htmlspecialchars($resultadoDia['mensagem']) . '</div>';
+        } else {
+            $mensagem = '<div class="alert alert-danger" role="alert">' . htmlspecialchars($resultadoDia['mensagem']) . '</div>';
+        }
+    }
+}
+
+if (!$adminAutenticado && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    foreach ($acoesProtegidas as $acaoProtegida) {
+        if (isset($_POST[$acaoProtegida])) {
+            $_SESSION['admin_pending_post'] = $_POST;
+            $acaoPendenteCodificada = codificarAcaoPendente($_POST);
+            $mensagem = '<div class="alert alert-warning" role="alert">Sua sessao expirou. Informe a senha para concluir a acao pendente.</div>';
+            break;
+        }
+    }
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['admin_logout'])) {
     unset($_SESSION['admin_page_authenticated']);
+    unset($_SESSION['admin_pending_post']);
     $adminAutenticado = false;
 }
 
@@ -18,40 +139,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['admin_login'])) {
     if (verificarSenhaConfiguracao('admin_page_password', $senha)) {
         $_SESSION['admin_page_authenticated'] = true;
         $adminAutenticado = true;
+        session_regenerate_id(true);
+
+        $postPendente = $_SESSION['admin_pending_post'] ?? null;
+        unset($_SESSION['admin_pending_post']);
+        if (!is_array($postPendente)) {
+            $postPendente = decodificarAcaoPendente($_POST['acao_pendente'] ?? '');
+        }
+
+        if (is_array($postPendente)) {
+            processarAcaoAdministrativa($postPendente, $mensagem);
+        }
     } else {
         $mensagem = '<div class="alert alert-danger" role="alert">Senha invalida.</div>';
-    }
-}
-
-if ($adminAutenticado && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['salvar_senha_edicao'])) {
-    $novaSenha = (string)($_POST['nova_senha_edicao'] ?? '');
-    $confirmacao = (string)($_POST['confirmar_senha_edicao'] ?? '');
-
-    if (trim($novaSenha) === '') {
-        $mensagem = '<div class="alert alert-danger" role="alert">Informe a nova senha de edicao.</div>';
-    } elseif ($novaSenha !== $confirmacao) {
-        $mensagem = '<div class="alert alert-danger" role="alert">Confirmacao da senha de edicao nao confere.</div>';
-    } elseif (definirSenhaConfiguracao('edit_access_password', $novaSenha)) {
-        $mensagem = '<div class="alert alert-success" role="alert">Senha de edicao atualizada com sucesso.</div>';
-    } else {
-        $mensagem = '<div class="alert alert-danger" role="alert">Nao foi possivel atualizar a senha de edicao.</div>';
-    }
-}
-
-if ($adminAutenticado && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['salvar_pessoa'])) {
-    $resultado = atualizarPessoaCadastrada(
-        $_POST['pessoa_id'] ?? 0,
-        $_POST['nome'] ?? '',
-        $_POST['cpf'] ?? '',
-        $_POST['email'] ?? '',
-        $_POST['supervisor'] ?? '',
-        $_POST['categoria'] ?? ''
-    );
-
-    if ($resultado['sucesso']) {
-        $mensagem = '<div class="alert alert-success" role="alert">' . htmlspecialchars($resultado['mensagem']) . '</div>';
-    } else {
-        $mensagem = '<div class="alert alert-danger" role="alert">' . htmlspecialchars($resultado['mensagem']) . '</div>';
     }
 }
 
@@ -60,28 +160,8 @@ $tiposDiaNaoTrabalhado = [
     'nao_trabalhado' => 'Dia nao trabalhado'
 ];
 
-if ($adminAutenticado && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['salvar_dia_nao_trabalhado'])) {
-    $resultadoDia = salvarDiaNaoTrabalhado(
-        $_POST['data_dia_nao_trabalhado'] ?? '',
-        $_POST['tipo_dia_nao_trabalhado'] ?? '',
-        $_POST['descricao_dia_nao_trabalhado'] ?? ''
-    );
-
-    if ($resultadoDia['sucesso']) {
-        $mensagem = '<div class="alert alert-success" role="alert">' . htmlspecialchars($resultadoDia['mensagem']) . '</div>';
-    } else {
-        $mensagem = '<div class="alert alert-danger" role="alert">' . htmlspecialchars($resultadoDia['mensagem']) . '</div>';
-    }
-}
-
-if ($adminAutenticado && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['excluir_dia_nao_trabalhado'])) {
-    $resultadoDia = excluirDiaNaoTrabalhado($_POST['dia_nao_trabalhado_id'] ?? 0);
-
-    if ($resultadoDia['sucesso']) {
-        $mensagem = '<div class="alert alert-success" role="alert">' . htmlspecialchars($resultadoDia['mensagem']) . '</div>';
-    } else {
-        $mensagem = '<div class="alert alert-danger" role="alert">' . htmlspecialchars($resultadoDia['mensagem']) . '</div>';
-    }
+if ($adminAutenticado && $_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login']) && !isset($_POST['admin_logout'])) {
+    processarAcaoAdministrativa($_POST, $mensagem);
 }
 
 $pessoas = $adminAutenticado ? obterPessoasCadastradas() : [];
@@ -111,6 +191,9 @@ $diasNaoTrabalhados = $adminAutenticado ? obterDiasNaoTrabalhados() : [];
                 <div class="card-body">
                     <h2 class="h6">Acesso protegido por senha</h2>
                     <form method="POST" class="row g-3 mt-1">
+                        <?php if ($acaoPendenteCodificada !== ''): ?>
+                            <input type="hidden" name="acao_pendente" value="<?php echo htmlspecialchars($acaoPendenteCodificada, ENT_QUOTES); ?>">
+                        <?php endif; ?>
                         <div class="col-md-6">
                             <label class="form-label" for="senha_admin">Senha</label>
                             <input type="password" class="form-control" id="senha_admin" name="senha_admin" required>

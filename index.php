@@ -218,6 +218,66 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['salvar'])) {
     }
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['salvar_multiplo'])) {
+    $func_id = (int)($_POST['funcionario_id'] ?? 0);
+    $datasSelecionadas = $_POST['datas'] ?? [];
+    $token_salvar = (string)($_POST['acesso'] ?? '');
+    $liberacao_por_token = validarTokenLiberacaoCalendario($token_salvar, $func_id) !== null;
+    $liberado_para_salvar = $pode_editar_calendario || $liberacao_por_token;
+
+    if (!is_array($datasSelecionadas)) {
+        $datasSelecionadas = [];
+    }
+
+    $datasValidas = [];
+    foreach ($datasSelecionadas as $dataInformada) {
+        $dataLimpa = trim((string)$dataInformada);
+        if ($dataLimpa !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataLimpa)) {
+            $datasValidas[$dataLimpa] = $dataLimpa;
+        }
+    }
+    $datasValidas = array_values($datasValidas);
+
+    if (!$liberado_para_salvar || $func_id !== $funcionario_id) {
+        $mensagem = '<div class="alert alert-danger alert-dismissible fade show" role="alert">
+                        Calendário bloqueado. Selecione o nome e valide os 3 dígitos do CPF para editar.
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>';
+    } elseif (count($datasValidas) === 0) {
+        $mensagem = '<div class="alert alert-danger alert-dismissible fade show" role="alert">
+                        Selecione pelo menos um dia para preencher a escala múltipla.
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>';
+    } else {
+        $status_manha = isset($_POST['status_manha']) && $_POST['status_manha'] !== '' ? $_POST['status_manha'] : null;
+        $status_tarde = isset($_POST['status_tarde']) && $_POST['status_tarde'] !== '' ? $_POST['status_tarde'] : null;
+        $salvouTudo = true;
+
+        foreach ($datasValidas as $dataSelecionada) {
+            $okManha = salvarRegimeTrabalho($func_id, $dataSelecionada, 'manhã', $status_manha);
+            $okTarde = salvarRegimeTrabalho($func_id, $dataSelecionada, 'tarde', $status_tarde);
+
+            if (!$okManha || !$okTarde) {
+                $salvouTudo = false;
+                break;
+            }
+        }
+
+        if ($salvouTudo) {
+            $quantidadeDias = count($datasValidas);
+            $mensagem = '<div class="alert alert-success alert-dismissible fade show" role="alert">'
+                . htmlspecialchars($quantidadeDias . ' dia(s) atualizado(s) com sucesso.')
+                . '<button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>';
+        } else {
+            $mensagem = '<div class="alert alert-danger alert-dismissible fade show" role="alert">
+                            Erro ao salvar a escala múltipla.
+                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                        </div>';
+        }
+    }
+}
+
 $funcionariosPorCategoria = obterFuncionariosPorCategoria();
 $funcionarios = array_merge($funcionariosPorCategoria['servidores'], $funcionariosPorCategoria['estagiarios']);
 $nome_funcionario_selecionado = '';
@@ -475,6 +535,10 @@ while ($dataCursor <= $fim) {
             justify-content: center;
         }
 
+        .dia[data-dia] {
+            position: relative;
+        }
+
         .dia:hover {
             box-shadow: 0 4px 12px rgba(37, 99, 235, 0.14);
             border-color: #2563eb;
@@ -488,6 +552,17 @@ while ($dataCursor <= $fim) {
         .dia.bloqueado:hover {
             box-shadow: none;
             border-color: #d1d5db;
+        }
+
+        .dia.modo-multiplo {
+            cursor: pointer;
+            padding-top: 30px;
+        }
+
+        .dia.modo-multiplo.selecionado {
+            border-color: #1d4ed8;
+            background: #eff6ff;
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.16);
         }
 
         .dia.outro-mes {
@@ -514,6 +589,20 @@ while ($dataCursor <= $fim) {
             font-weight: 700;
             font-size: 16px;
             margin-bottom: 5px;
+        }
+
+        .dia-checkbox {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            width: 18px;
+            height: 18px;
+            display: none;
+            pointer-events: none;
+        }
+
+        .calendario.modo-multiplo .dia[data-dia] .dia-checkbox {
+            display: block;
         }
 
         .feriado-tag {
@@ -549,6 +638,7 @@ while ($dataCursor <= $fim) {
         .status-homeoffice { background: #fef3c7; color: #92400e; }
         .status-férias { background: #fee2e2; color: #991b1b; }
         .status-afastamento { background: #e5e7eb; color: #374151; }
+        .status-ads { background: #dbeafe; color: #1e40af; }
 
         .modal-header-custom {
             background: linear-gradient(135deg, #2563eb, #1d4ed8);
@@ -595,6 +685,30 @@ while ($dataCursor <= $fim) {
             color: #fff;
             transform: translateY(-1px);
             transition: all 0.2s ease;
+        }
+
+        .acoes-multiplas {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .acoes-multiplas .btn {
+            white-space: nowrap;
+        }
+
+        .acoes-multiplas-info {
+            font-size: 0.88rem;
+            color: #4b5563;
+        }
+
+        .lista-datas-multiplas {
+            margin: 0;
+            padding-left: 18px;
+            max-height: 180px;
+            overflow-y: auto;
         }
 
         .modal-footer-acesso {
@@ -771,7 +885,19 @@ while ($dataCursor <= $fim) {
                             <div class="text-muted small mb-2">Dias com padrão quadriculado indicam feriado.</div>
                         <?php endif; ?>
 
-                        <div class="calendario">
+                        <?php if ($pode_editar_calendario): ?>
+                            <div class="acoes-multiplas">
+                                <button type="button" class="btn btn-outline-primary" id="toggleSelecaoMultipla">
+                                    Cadastrar múltiplos dias de escala iguais
+                                </button>
+                                <button type="button" class="btn btn-primary d-none" id="abrirModalMultiplo" data-bs-toggle="modal" data-bs-target="#modalMultiplo" disabled>
+                                    Preencher escala múltipla
+                                </button>
+                                <span class="acoes-multiplas-info d-none" id="contadorSelecaoMultipla">Nenhum dia selecionado.</span>
+                            </div>
+                        <?php endif; ?>
+
+                        <div class="calendario" id="calendarioEscala">
                             <div class="dia-semana">Dom</div>
                             <div class="dia-semana">Seg</div>
                             <div class="dia-semana">Ter</div>
@@ -811,12 +937,16 @@ while ($dataCursor <= $fim) {
                                          title="<?php echo htmlspecialchars($titulo_dia, ENT_QUOTES); ?>"
                                      <?php endif; ?>
                                      <?php if ($pode_editar_calendario): ?>
+                                         data-dia-clicavel="1"
                                          data-bs-toggle="modal" data-bs-target="#modalDia"
                                          data-dia="<?php echo htmlspecialchars($data, ENT_QUOTES); ?>"
                                          data-funcionario-id="<?php echo (int)$funcionario_id; ?>"
                                          data-status-manha="<?php echo htmlspecialchars((string)($status_manha ?? ''), ENT_QUOTES); ?>"
                                          data-status-tarde="<?php echo htmlspecialchars((string)($status_tarde ?? ''), ENT_QUOTES); ?>"
                                      <?php endif; ?>>
+                                    <?php if ($pode_editar_calendario): ?>
+                                        <input class="form-check-input dia-checkbox" type="checkbox" tabindex="-1" aria-hidden="true">
+                                    <?php endif; ?>
                                     <div class="dia-numero"><?php echo $dia; ?></div>
                                     <?php if ($eh_feriado): ?>
                                         <div class="feriado-tag">Feriado</div>
@@ -917,6 +1047,7 @@ while ($dataCursor <= $fim) {
                             <div class="form-check"><input class="form-check-input" type="radio" name="status_manha" value="homeoffice" id="manha_homeoffice"><label class="form-check-label" for="manha_homeoffice">🏠 Home Office</label></div>
                             <div class="form-check"><input class="form-check-input" type="radio" name="status_manha" value="férias" id="manha_ferias"><label class="form-check-label" for="manha_ferias">🏖️ Férias</label></div>
                             <div class="form-check"><input class="form-check-input" type="radio" name="status_manha" value="afastamento" id="manha_afastamento"><label class="form-check-label" for="manha_afastamento">🚫 Afastamento</label></div>
+                            <div class="form-check"><input class="form-check-input" type="radio" name="status_manha" value="ads" id="manha_ads"><label class="form-check-label" for="manha_ads">📚 Ação de Desenvolvimento em Serviço – ADS</label></div>
                         </div>
 
                         <hr>
@@ -928,11 +1059,62 @@ while ($dataCursor <= $fim) {
                             <div class="form-check"><input class="form-check-input" type="radio" name="status_tarde" value="homeoffice" id="tarde_homeoffice"><label class="form-check-label" for="tarde_homeoffice">🏠 Home Office</label></div>
                             <div class="form-check"><input class="form-check-input" type="radio" name="status_tarde" value="férias" id="tarde_ferias"><label class="form-check-label" for="tarde_ferias">🏖️ Férias</label></div>
                             <div class="form-check"><input class="form-check-input" type="radio" name="status_tarde" value="afastamento" id="tarde_afastamento"><label class="form-check-label" for="tarde_afastamento">🚫 Afastamento</label></div>
+                            <div class="form-check"><input class="form-check-input" type="radio" name="status_tarde" value="ads" id="tarde_ads"><label class="form-check-label" for="tarde_ads">📚 Ação de Desenvolvimento em Serviço – ADS</label></div>
                         </div>
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
                         <button type="submit" name="salvar" class="btn btn-primary">Salvar</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="modalMultiplo" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header modal-header-custom">
+                    <h5 class="modal-title">Preencher escala múltipla</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <form method="POST" id="formModalMultiplo">
+                    <div class="modal-body">
+                        <input type="hidden" name="salvar_multiplo" value="1">
+                        <input type="hidden" name="funcionario_id" id="modalMultiploFuncionarioId" value="<?php echo (int)$funcionario_id; ?>">
+                        <input type="hidden" name="acesso" value="<?php echo htmlspecialchars($token_liberacao_ativo, ENT_QUOTES); ?>">
+                        <div id="modalMultiploDatasInputs"></div>
+
+                        <div class="mb-3">
+                            <label class="form-label"><strong>Dias selecionados: <span id="modalMultiploQuantidade">0</span></strong></label>
+                            <ul class="lista-datas-multiplas" id="modalMultiploListaDatas"></ul>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label"><strong>Manhã</strong></label>
+                            <div class="form-check"><input class="form-check-input" type="radio" name="status_manha" value="" id="multiplo_manha_nao_definido" checked><label class="form-check-label" for="multiplo_manha_nao_definido">Não definido</label></div>
+                            <div class="form-check"><input class="form-check-input" type="radio" name="status_manha" value="presencial" id="multiplo_manha_presencial"><label class="form-check-label" for="multiplo_manha_presencial">🏢 Presencial</label></div>
+                            <div class="form-check"><input class="form-check-input" type="radio" name="status_manha" value="homeoffice" id="multiplo_manha_homeoffice"><label class="form-check-label" for="multiplo_manha_homeoffice">🏠 Home Office</label></div>
+                            <div class="form-check"><input class="form-check-input" type="radio" name="status_manha" value="férias" id="multiplo_manha_ferias"><label class="form-check-label" for="multiplo_manha_ferias">🏖️ Férias</label></div>
+                            <div class="form-check"><input class="form-check-input" type="radio" name="status_manha" value="afastamento" id="multiplo_manha_afastamento"><label class="form-check-label" for="multiplo_manha_afastamento">🚫 Afastamento</label></div>
+                            <div class="form-check"><input class="form-check-input" type="radio" name="status_manha" value="ads" id="multiplo_manha_ads"><label class="form-check-label" for="multiplo_manha_ads">📚 Ação de Desenvolvimento em Serviço – ADS</label></div>
+                        </div>
+
+                        <hr>
+
+                        <div class="mb-3">
+                            <label class="form-label"><strong>Tarde</strong></label>
+                            <div class="form-check"><input class="form-check-input" type="radio" name="status_tarde" value="" id="multiplo_tarde_nao_definido" checked><label class="form-check-label" for="multiplo_tarde_nao_definido">Não definido</label></div>
+                            <div class="form-check"><input class="form-check-input" type="radio" name="status_tarde" value="presencial" id="multiplo_tarde_presencial"><label class="form-check-label" for="multiplo_tarde_presencial">🏢 Presencial</label></div>
+                            <div class="form-check"><input class="form-check-input" type="radio" name="status_tarde" value="homeoffice" id="multiplo_tarde_homeoffice"><label class="form-check-label" for="multiplo_tarde_homeoffice">🏠 Home Office</label></div>
+                            <div class="form-check"><input class="form-check-input" type="radio" name="status_tarde" value="férias" id="multiplo_tarde_ferias"><label class="form-check-label" for="multiplo_tarde_ferias">🏖️ Férias</label></div>
+                            <div class="form-check"><input class="form-check-input" type="radio" name="status_tarde" value="afastamento" id="multiplo_tarde_afastamento"><label class="form-check-label" for="multiplo_tarde_afastamento">🚫 Afastamento</label></div>
+                            <div class="form-check"><input class="form-check-input" type="radio" name="status_tarde" value="ads" id="multiplo_tarde_ads"><label class="form-check-label" for="multiplo_tarde_ads">📚 Ação de Desenvolvimento em Serviço – ADS</label></div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                        <button type="submit" class="btn btn-primary">Aplicar aos dias selecionados</button>
                     </div>
                 </form>
             </div>

@@ -514,6 +514,7 @@ function obterContagemStatusPorDia($ano, $mes, $dia, $turno) {
         'homeoffice' => 0,
         'férias' => 0,
         'afastamento' => 0,
+        'ads' => 0,
         'nao_definido' => 0
     ];
     
@@ -575,7 +576,8 @@ function obterCorStatus($status) {
         'presencial' => 'success',
         'homeoffice' => 'warning',
         'férias' => 'danger',
-        'afastamento' => 'secondary'
+        'afastamento' => 'secondary',
+        'ads' => 'primary'
     ];
     return $cores[$status] ?? 'light';
 }
@@ -588,7 +590,8 @@ function obterIconeStatus($status) {
         'presencial' => '🏢',
         'homeoffice' => '🏠',
         'férias' => '🏖️',
-        'afastamento' => '🚫'
+        'afastamento' => '🚫',
+        'ads' => '📚'
     ];
     return $icones[$status] ?? '❌';
 }

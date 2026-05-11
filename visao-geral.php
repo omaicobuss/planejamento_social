@@ -584,6 +584,11 @@ foreach ($dias_mes as $dia_info) {
             color: #383d41;
         }
 
+        .status-ads {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
         .dia-sem-presencial {
             background: #ffe6e6 !important;
             font-weight: 600;

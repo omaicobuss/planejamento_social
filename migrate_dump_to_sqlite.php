@@ -38,7 +38,7 @@ CREATE TABLE registros_regime (
     funcionario_id INTEGER NOT NULL,
     data TEXT NOT NULL,
     turno TEXT NOT NULL CHECK (turno IN ('manhã', 'tarde')),
-    status TEXT NOT NULL CHECK (status IN ('presencial', 'homeoffice', 'férias', 'afastamento')),
+    status TEXT NOT NULL CHECK (status IN ('presencial', 'homeoffice', 'férias', 'afastamento', 'ads')),
     data_registro TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(funcionario_id, data, turno),
     FOREIGN KEY (funcionario_id) REFERENCES funcionarios(id) ON DELETE CASCADE

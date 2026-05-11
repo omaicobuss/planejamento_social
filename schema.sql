@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS registros_regime (
     funcionario_id INT NOT NULL,
     data DATE NOT NULL,
     turno ENUM('manhã', 'tarde') NOT NULL,
-    status ENUM('presencial', 'homeoffice', 'férias', 'afastamento') NOT NULL,
+    status ENUM('presencial', 'homeoffice', 'férias', 'afastamento', 'ads') NOT NULL,
     data_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (funcionario_id) REFERENCES funcionarios(id) ON DELETE CASCADE,
     UNIQUE KEY unique_registro (funcionario_id, data, turno)
